@@ -1,0 +1,9 @@
+{
+  "name": "GestorPro - Supabase",
+  "description": "GestorPro",
+  "requestFramePermissions": [
+    "microphone",
+    "geolocation"
+  ],
+  "prompt": ""
+}
