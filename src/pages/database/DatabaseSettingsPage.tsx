@@ -1,0 +1,369 @@
+import React, { useState, useCallback, useEffect } from 'react';
+import { supabaseService } from '../../services/storage';
+import { ServerIcon, SpinnerIcon, CheckCircle2Icon, AlertCircleIcon } from '../../components/Icons';
+
+type Status = 'ok' | 'missing' | 'error';
+interface StatusMessage {
+    text: string;
+    status: Status;
+}
+
+const SpecialAlert = () => (
+    <div className="bg-yellow-900/50 border border-yellow-700 rounded-xl p-6 mb-8 animate-pulse">
+        <div className="flex items-start gap-4">
+            <AlertCircleIcon className="w-8 h-8 text-yellow-300 flex-shrink-0 mt-1" />
+            <div>
+                <h3 className="text-xl font-semibold text-yellow-200">Atenção: Erro Comum ao Salvar Chamados</h3>
+                <p className="text-yellow-300/90 mt-2">
+                    Se você está vendo erros como <strong className="text-white">"Could not find the 'product_id' column"</strong> ao salvar um chamado, isso indica um problema de configuração do seu banco de dados.
+                </p>
+                <p className="text-yellow-300/90 mt-2">
+                    Por favor, siga <strong className="text-white">TODOS</strong> os passos nesta página com atenção. Primeiro, use o botão <strong className="text-white">"Sincronizar"</strong>. Se o erro persistir, o problema é quase certamente a <strong className="text-white">Segurança a Nível de Linha (RLS)</strong>, explicada no guia abaixo.
+                </p>
+            </div>
+        </div>
+    </div>
+);
+
+
+const InitialSetupInstructions = ({ onRetry }) => (
+    <div className="mt-8 pt-6 border-t border-gray-700">
+        <div className="bg-red-900/50 border border-red-700 rounded-xl p-6">
+            <div className="flex items-start gap-4">
+                <AlertCircleIcon className="w-8 h-8 text-red-400 flex-shrink-0 mt-1" />
+                <div>
+                    <h3 className="text-xl font-semibold text-red-200">Ação de Configuração Necessária</h3>
+                    <p className="text-red-300 mt-2">
+                        A verificação falhou porque a aplicação não tem permissão para ler ou modificar a estrutura do seu banco de dados Supabase. Isso é uma medida de segurança padrão.
+                    </p>
+                    <p className="text-red-300 mt-2">
+                        Para habilitar esta funcionalidade, você precisa criar três "funções" no seu banco de dados. Os scripts abaixo foram aprimorados para garantir maior robustez e compatibilidade.
+                    </p>
+                </div>
+            </div>
+
+            <div className="mt-6 space-y-6">
+                <div>
+                    <h4 className="font-semibold text-white mb-2">Passo 1: Vá para o Editor SQL</h4>
+                    <p className="text-sm text-gray-300">No seu painel do Supabase, navegue até <code className="bg-gray-900 px-1.5 py-0.5 rounded text-sm">Database</code> &gt; <code className="bg-gray-900 px-1.5 py-0.5 rounded text-sm">SQL Editor</code> e clique em <code className="bg-gray-900 px-1.5 py-0.5 rounded text-sm">New query</code>.</p>
+                </div>
+                
+                <div>
+                    <h4 className="font-semibold text-white mb-2">Passo 2: Execute as Funções SQL</h4>
+                    <p className="text-sm text-gray-300 mb-2">Copie os três blocos de código abaixo, cole no editor SQL e clique em "Run".</p>
+                    
+                    <label className="text-xs text-gray-400">1. Função para LER a estrutura do banco:</label>
+                    <pre className="bg-gray-900 p-3 rounded-md text-sm text-gray-200 overflow-x-auto mt-1">
+                        <code>
+{`-- Permite que a aplicação leia nomes de tabelas e colunas de forma segura.
+-- A função agora é mais robusta e funciona mesmo com o banco de dados vazio.
+CREATE OR REPLACE FUNCTION get_public_schema_info()
+RETURNS JSON
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+  SELECT COALESCE(
+    json_agg(
+      json_build_object(
+        'table_name', c.table_name,
+        'column_name', c.column_name,
+        'data_type', c.data_type
+      )
+    ),
+    '[]'::json
+  )
+  FROM information_schema.columns c
+  WHERE c.table_schema = 'public';
+$$;
+
+-- Concede permissão para a chave anônima (usada pela aplicação) executar a função.
+GRANT EXECUTE ON FUNCTION get_public_schema_info() TO anon;`}
+                        </code>
+                    </pre>
+
+                    <label className="text-xs text-gray-400 mt-4 block">2. Função para CRIAR TABELAS com segurança:</label>
+                    <pre className="bg-gray-900 p-3 rounded-md text-sm text-gray-200 overflow-x-auto mt-1">
+                        <code>
+{`-- Cria uma tabela com colunas base. É mais seguro que um executor de SQL genérico.
+CREATE OR REPLACE FUNCTION create_table_from_schema(p_table_name text, p_columns text[])
+RETURNS void AS $$
+BEGIN
+  -- Adiciona colunas padrão que todas as tabelas devem ter
+  EXECUTE format(
+    'CREATE TABLE public.%I (id bigint generated by default as identity primary key, created_at timestamp with time zone not null default now(), %s);',
+    p_table_name,
+    array_to_string(
+      (SELECT array_agg(col) FROM unnest(p_columns) col WHERE col NOT LIKE 'id %' AND col NOT LIKE 'created_at %'),
+      ', '
+    )
+  );
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Concede permissão para a chave anônima (usada pela aplicação) executar a função.
+GRANT EXECUTE ON FUNCTION create_table_from_schema(text, text[]) TO anon;`}
+                        </code>
+                    </pre>
+
+                     <label className="text-xs text-gray-400 mt-4 block">3. Função para ADICIONAR COLUNAS com segurança:</label>
+                    <pre className="bg-gray-900 p-3 rounded-md text-sm text-gray-200 overflow-x-auto mt-1">
+                        <code>
+{`-- Adiciona uma coluna a uma tabela existente. Mais seguro que um executor de SQL genérico.
+CREATE OR REPLACE FUNCTION add_column_from_schema(p_table_name text, p_column_name text, p_column_type text)
+RETURNS void AS $$
+BEGIN
+  EXECUTE format('ALTER TABLE public.%I ADD COLUMN %I %s;', p_table_name, p_column_name, p_column_type);
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Concede permissão para a chave anônima (usada pela aplicação) executar a função.
+GRANT EXECUTE ON FUNCTION add_column_from_schema(text, text, text) TO anon;`}
+                        </code>
+                    </pre>
+                </div>
+
+                <div>
+                    <h4 className="font-semibold text-white mb-2">Passo 3: Tente Novamente</h4>
+                    <p className="text-sm text-gray-300 mb-3">Após executar o SQL com sucesso, clique no botão abaixo para verificar a estrutura novamente.</p>
+                    <button
+                        onClick={onRetry}
+                        className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors"
+                    >
+                        Verificar Estrutura Novamente
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
+const RLSInstructions = () => (
+    <div className="mt-8">
+        <div className="bg-blue-900/50 border border-blue-700 rounded-xl p-6">
+            <div className="flex items-start gap-4">
+                <AlertCircleIcon className="w-8 h-8 text-blue-400 flex-shrink-0 mt-1" />
+                <div>
+                    <h3 className="text-xl font-semibold text-blue-200">Dica: Verificando a Segurança a Nível de Linha (RLS)</h3>
+                    <p className="text-blue-300 mt-2">
+                        Se você encontrar erros como "column not found" (coluna não encontrada) ou "permission denied" (permissão negada) mesmo após sincronizar o esquema, a causa provável é a RLS.
+                    </p>
+                    <div className="mt-6 space-y-4">
+                        <div>
+                            <h4 className="font-semibold text-white mb-2">O que é RLS?</h4>
+                            <p className="text-sm text-gray-300">RLS é uma camada de segurança do Supabase. Se uma tabela tem RLS ativada, você precisa criar "Políticas" (Policies) para permitir que a aplicação leia ou escreva dados. Sem uma política, a aplicação não consegue "ver" as colunas ou linhas, causando erros.</p>
+                        </div>
+                        <div>
+                            <h4 className="font-semibold text-white mb-2">Como Verificar e Corrigir</h4>
+                            <ol className="text-sm text-gray-300 list-decimal list-inside space-y-2">
+                                <li>No seu painel do Supabase, vá para <code className="bg-gray-900 px-1.5 py-0.5 rounded">Authentication</code> &gt; <code className="bg-gray-900 px-1.5 py-0.5 rounded">Policies</code>.</li>
+                                <li>Encontre a tabela que está causando o erro (por exemplo, a tabela <code className="bg-gray-900 px-1.5 py-0.5 rounded">item</code>).</li>
+                                <li>Se a RLS estiver <strong>"Enabled"</strong>, você PRECISA de políticas.</li>
+                                <li><strong>Solução Rápida:</strong> Clique em "New Policy" e use o template "Enable read access to everyone" e repita para "Enable insert access for everyone". Isso cria políticas básicas que permitem que a aplicação funcione.</li>
+                                <li>Para produção, você deve criar políticas mais restritivas baseadas em usuários autenticados.</li>
+                            </ol>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+);
+
+
+export const DatabaseSettingsPage = ({ addLog }) => {
+    const [loading, setLoading] = useState(false);
+    const [isSyncing, setIsSyncing] = useState(false);
+    const [results, setResults] = useState<{ statusMessages: StatusMessage[], actionsTaken: string[] }>({ statusMessages: [], actionsTaken: [] });
+    const [hasMissingItems, setHasMissingItems] = useState(false);
+    const [setupError, setSetupError] = useState(false);
+    
+    const [migrationNeeded, setMigrationNeeded] = useState(false);
+    const [isMigrating, setIsMigrating] = useState(false);
+    const [migrationResult, setMigrationResult] = useState('');
+
+    const checkMigrations = useCallback(async () => {
+        try {
+            const needsMigration = await supabaseService.checkForMigrations();
+            setMigrationNeeded(needsMigration);
+            if (needsMigration) addLog('Migração de dados pendente detectada.');
+        } catch (error) {
+            addLog(`Erro ao verificar migrações: ${error.message}`);
+        }
+    }, [addLog]);
+
+    useEffect(() => {
+        checkMigrations();
+    }, [checkMigrations]);
+
+    const handleRunMigration = async () => {
+        setIsMigrating(true);
+        setMigrationResult('');
+        try {
+            const result = await supabaseService.runDataMigration();
+            setMigrationResult(result);
+            addLog('Migração de dados executada com sucesso.');
+            setMigrationNeeded(false); // Hide the section after successful migration
+        } catch (error) {
+            const message = error instanceof Error ? error.message : 'Erro desconhecido';
+            setMigrationResult(`Erro na migração: ${message}`);
+            addLog(`Erro ao executar migração: ${message}`);
+        } finally {
+            setIsMigrating(false);
+        }
+    };
+
+    const handleVerify = useCallback(async (sync = false) => {
+        setSetupError(false);
+        addLog(sync ? 'Iniciando sincronização do banco de dados...' : 'Iniciando verificação do banco de dados...');
+        if (sync) setIsSyncing(true);
+        else setLoading(true);
+
+        setResults({ statusMessages: [], actionsTaken: [] }); // Limpa resultados anteriores
+        
+        try {
+            const report = await supabaseService.verifyAndSyncSchema(sync);
+            setResults({ statusMessages: report.statusMessages, actionsTaken: report.actionsTaken });
+            
+            const missing = report.missingTables.length > 0 || Object.keys(report.missingColumns).length > 0;
+            setHasMissingItems(missing);
+
+            if (sync) {
+                addLog('Sincronização concluída.');
+                if (report.actionsTaken.length > 0) {
+                    addLog(`Ações realizadas: ${report.actionsTaken.join(', ')}`);
+                } else {
+                     addLog('Nenhuma ação necessária.');
+                }
+                // Re-verifica após a sincronização para confirmar
+                const finalReport = await supabaseService.verifyAndSyncSchema(false);
+                setResults({ statusMessages: finalReport.statusMessages, actionsTaken: report.actionsTaken });
+                setHasMissingItems(finalReport.missingTables.length > 0 || Object.keys(finalReport.missingColumns).length > 0);
+            } else {
+                addLog('Verificação concluída.');
+                 if (missing) {
+                     addLog('Problemas de esquema encontrados.');
+                 } else {
+                     addLog('Esquema do banco está sincronizado.');
+                 }
+            }
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (message.startsWith('SCHEMA_INTROSPECTION_ERROR:')) {
+                setSetupError(true);
+                addLog('Erro de permissão no Supabase detectado. Requer configuração manual.');
+            } else {
+                addLog(`ERRO durante a operação do banco: ${message}`);
+                setResults(prev => ({ ...prev, statusMessages: [...prev.statusMessages, { text: `Erro crítico: ${message}`, status: 'error' }] }));
+            }
+        } finally {
+            if (sync) setIsSyncing(false);
+            else setLoading(false);
+        }
+    }, [addLog]);
+    
+    const StatusIcon = ({ status }: { status: Status }) => {
+        switch (status) {
+            case 'ok': return <CheckCircle2Icon className="w-6 h-6 text-green-400 flex-shrink-0" />;
+            case 'missing': return <AlertCircleIcon className="w-6 h-6 text-yellow-400 flex-shrink-0" />;
+            case 'error': return <AlertCircleIcon className="w-6 h-6 text-red-400 flex-shrink-0" />;
+            default: return null;
+        }
+    };
+
+    return (
+        <div>
+            <header className="mb-8">
+                <h2 className="text-3xl font-bold text-white">Configurações do Banco de Dados</h2>
+                <p className="text-gray-400 mt-1">Verifique e sincronize a estrutura de tabelas e colunas com o padrão da aplicação.</p>
+            </header>
+            
+            <SpecialAlert />
+            
+            {migrationNeeded && (
+                <div className="bg-purple-900/50 border border-purple-700 rounded-xl p-6 mb-8">
+                    <h3 className="text-xl font-semibold text-purple-200 mb-2">Migrações de Dados Pendentes</h3>
+                    <p className="text-purple-300/90 mb-4">Detectamos que você possui dados no formato antigo (como faturamentos recorrentes no cadastro de clientes). Execute a migração para movê-los para o novo sistema e corrigir erros de exibição.</p>
+                    <button
+                        onClick={handleRunMigration}
+                        disabled={isMigrating}
+                        className="px-5 py-2 text-sm font-semibold text-white bg-purple-600 rounded-lg hover:bg-purple-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                    >
+                        {isMigrating ? <SpinnerIcon className="w-5 h-5" /> : 'Executar Migrações Pendentes'}
+                    </button>
+                    {migrationResult && (
+                        <p className={`mt-4 text-sm ${migrationResult.startsWith('Erro') ? 'text-red-300' : 'text-green-300'}`}>
+                            {migrationResult}
+                        </p>
+                    )}
+                </div>
+            )}
+
+            <div className="bg-gray-800 rounded-xl shadow-lg p-6">
+                <div className="flex flex-col sm:flex-row items-center gap-4">
+                    <ServerIcon className="w-12 h-12 text-blue-400 flex-shrink-0" />
+                    <div className="flex-grow text-center sm:text-left">
+                        <p className="text-gray-300">
+                           Esta ferramenta compara o esquema do banco de dados no Supabase com o que a aplicação espera. Se encontrar tabelas ou colunas faltando, você pode sincronizá-las automaticamente.
+                        </p>
+                    </div>
+                     <div className="flex items-center gap-3 mt-4 sm:mt-0">
+                        <button
+                            name="verifyDb"
+                            onClick={() => handleVerify(false)}
+                            disabled={loading || isSyncing}
+                            className="px-5 py-2 text-sm font-semibold text-white bg-gray-600 rounded-lg hover:bg-gray-500 transition-colors disabled:opacity-50 disabled:cursor-wait"
+                        >
+                            {loading ? <SpinnerIcon className="w-5 h-5" /> : 'Verificar Estrutura'}
+                        </button>
+                        <button
+                            name="syncDb"
+                            onClick={() => handleVerify(true)}
+                            disabled={!hasMissingItems || isSyncing || loading}
+                            className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                             {isSyncing ? <SpinnerIcon className="w-5 h-5" /> : 'Sincronizar'}
+                        </button>
+                    </div>
+                </div>
+
+                {setupError ? (
+                    <InitialSetupInstructions onRetry={() => handleVerify(false)} />
+                ) : ( (loading || isSyncing || results.statusMessages.length > 0) && (
+                    <div className="mt-8 pt-6 border-t border-gray-700">
+                        <h3 className="text-lg font-semibold text-white mb-4">Resultados da Verificação</h3>
+                        <div className="bg-gray-900/50 p-4 rounded-lg max-h-96 overflow-y-auto sidebar-scroll font-mono text-sm">
+                            {results.actionsTaken.length > 0 && (
+                                <div className="mb-4 p-3 bg-blue-900/30 rounded-md">
+                                    <h4 className="font-semibold text-blue-300 mb-2">Ações Realizadas:</h4>
+                                    <ul className="space-y-1 list-disc list-inside text-blue-300/80">
+                                        {results.actionsTaken.map((action, index) => <li key={index}>{action}</li>)}
+                                    </ul>
+                                </div>
+                            )}
+                            <ul className="space-y-2">
+                               {results.statusMessages.map((msg, index) => (
+                                   <li key={index} className="flex items-center gap-3">
+                                       <StatusIcon status={msg.status} />
+                                       <span className={`${msg.text.startsWith('  ') ? 'pl-4' : ''} ${msg.status === 'missing' ? 'text-yellow-300' : 'text-gray-300'}`}>
+                                            {msg.text.trim()}
+                                       </span>
+                                   </li>
+                               ))}
+                               {!hasMissingItems && results.statusMessages.length > 0 && !loading && !isSyncing && (
+                                    <li className="flex items-center gap-3 pt-3 mt-3 border-t border-gray-700/50">
+                                        <CheckCircle2Icon className="w-6 h-6 text-green-400" />
+                                        <span className="font-semibold text-green-300 text-base">Banco de dados sincronizado!</span>
+                                    </li>
+                               )}
+                            </ul>
+                        </div>
+                    </div>
+                ))}
+
+            </div>
+            
+            { !setupError && <RLSInstructions /> }
+        </div>
+    );
+};

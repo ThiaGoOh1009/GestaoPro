@@ -25,13 +25,17 @@ body {
 }
 
 
-/* Modal Animations */
+/* Modal & View Animations */
 .modal-enter {
   animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .modal-content-enter {
   animation: slideInUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-fadeIn {
+  animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 @keyframes fadeIn {
@@ -44,39 +48,6 @@ body {
   to { transform: translateY(0) scale(1); opacity: 1; }
 }
 
-/* Leaflet Dark Theme Adjustments */
-.leaflet-tile-pane {
-    filter: brightness(0.8) contrast(1.2) saturate(0.8);
-}
-
-.leaflet-popup-content-wrapper, .leaflet-popup-tip {
-    background-color: #1F2937; /* bg-gray-800 */
-    color: #D1D5DB; /* text-gray-300 */
-    box-shadow: 0 3px 14px rgba(0,0,0,0.4);
-}
-
-.leaflet-control-zoom-in, .leaflet-control-zoom-out {
-    background-color: #1f2937 !important;
-    color: #d1d5db !important;
-    border-color: #374151 !important;
-}
-.leaflet-control-zoom-in:hover, .leaflet-control-zoom-out:hover {
-    background-color: #374151 !important;
-}
-
-.leaflet-container a {
-    color: #3b82f6 !important; /* text-blue-500 */
-}
-
-.leaflet-control-custom {
-    display: flex;
-    justify-content: center;
-    align-items: center;
-}
-.leaflet-control-custom:hover {
-     background-color: #374151 !important;
-}
-
 /* Custom dark theme select */
 .custom-select {
     -webkit-appearance: none;
@@ -87,4 +58,72 @@ body {
     background-position: right 0.5rem center;
     background-size: 1.5em 1.5em;
     padding-right: 2.5rem;
+}
+
+/* Install Prompt Animation */
+@keyframes slideUpFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(20px) translateX(-50%);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
+}
+
+.install-prompt-banner {
+  animation: slideUpFadeIn 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Map Marker Pulse Animation */
+@keyframes pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  50% {
+    transform: scale(2);
+    opacity: 0;
+  }
+}
+
+.pulse-animate {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Custom class for Google Maps region labels */
+.map-region-label {
+    text-shadow: 0 1px 4px rgba(0,0,0,0.8);
+}
+
+/* --- New Marker Styles for RegioesPage --- */
+@keyframes halo-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.7;
+  }
+  50% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}
+
+.marker-halo {
+  position: absolute;
+  width: 1rem; /* size of the marker dot */
+  height: 1rem;
+  border-radius: 50%;
+  background-color: #ef4444; /* red-500 */
+  animation: halo-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  z-index: -1;
+}
+
+.marker-dot {
+  width: 1rem;
+  height: 1rem;
+  background-color: black;
+  border: 2px solid white;
+  border-radius: 50%;
+  box-shadow: 0 0 5px rgba(0,0,0,0.5);
 }

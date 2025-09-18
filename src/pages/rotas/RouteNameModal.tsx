@@ -36,7 +36,7 @@ export const RouteNameModal: React.FC<RouteNameModalProps> = ({ isOpen, onClose,
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Nome da Rota Agrupada" maxWidth="max-w-md">
+        <Modal isOpen={isOpen} onClose={onClose} title="Nome da Rota Agrupada" maxWidth="max-w-md" closeOnBackdropClick={false} closeOnEscape={false} showCloseButton={false}>
             <form onSubmit={handleSubmit} className="space-y-6">
                 <p className="text-sm text-gray-400">
                     Por favor, insira um nome para a nova rota que agrupará todos os chamados selecionados.
@@ -50,11 +50,12 @@ export const RouteNameModal: React.FC<RouteNameModalProps> = ({ isOpen, onClose,
                     required
                 />
                 <div className="flex justify-end space-x-3 pt-6 border-t border-gray-700">
-                    <button type="button" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">
+                    <button type="button" name="cancel" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">
                         Cancelar
                     </button>
                     <button 
                         type="submit" 
+                        name="saveRoute"
                         disabled={!routeName.trim()}
                         className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >

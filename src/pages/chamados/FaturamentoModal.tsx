@@ -15,11 +15,11 @@ export const FaturamentoModal = ({ isOpen, onClose, onConfirm, chamado }) => {
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Faturar Chamado" maxWidth="max-w-lg">
+        <Modal isOpen={isOpen} onClose={onClose} title="Faturar Chamado" maxWidth="max-w-lg" closeOnBackdropClick={false} closeOnEscape={false} showCloseButton={false}>
             <div className="space-y-6">
                 <div className="bg-gray-900/50 p-4 rounded-lg text-center">
                     <p className="text-sm text-gray-400">Total do Chamado para</p>
-                    <p className="text-lg font-semibold text-white">{chamado.clientName}</p>
+                    <p className="text-lg font-semibold text-white">{chamado.client_name}</p>
                     <p className="text-4xl font-bold text-green-400 mt-2">{formatCurrency(totalValue)}</p>
                 </div>
 
@@ -28,6 +28,7 @@ export const FaturamentoModal = ({ isOpen, onClose, onConfirm, chamado }) => {
                     <div className="flex rounded-lg bg-gray-700 p-1">
                         <button
                             type="button"
+                            name="paymentMethodVista"
                             onClick={() => setPaymentMethod('À Vista')}
                             className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-colors ${paymentMethod === 'À Vista' ? 'bg-blue-500 text-white' : 'text-gray-300 hover:bg-gray-600'}`}
                         >
@@ -35,6 +36,7 @@ export const FaturamentoModal = ({ isOpen, onClose, onConfirm, chamado }) => {
                         </button>
                         <button
                             type="button"
+                            name="paymentMethodPrazo"
                             onClick={() => setPaymentMethod('A Prazo')}
                             className={`flex-1 py-1.5 text-sm font-semibold rounded-md transition-colors ${paymentMethod === 'A Prazo' ? 'bg-purple-500 text-white' : 'text-gray-300 hover:bg-gray-600'}`}
                         >
@@ -52,9 +54,10 @@ export const FaturamentoModal = ({ isOpen, onClose, onConfirm, chamado }) => {
             </div>
 
             <div className="flex justify-end space-x-3 pt-6 mt-4 border-t border-gray-700">
-                <button type="button" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+                <button type="button" name="formCancel" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
                 <button
                     type="button"
+                    name="formConfirm"
                     onClick={handleSubmit}
                     className="flex items-center px-5 py-2 text-sm font-semibold text-white bg-green-600 rounded-lg hover:bg-green-500 transition-colors"
                 >

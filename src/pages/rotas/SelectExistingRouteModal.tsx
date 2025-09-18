@@ -4,8 +4,8 @@ import { Modal } from '../../components/Modal';
 interface Rota {
     id: number;
     region: string;
-    chamadoIds: number[];
-    createdAt: string;
+    chamado_ids: number[];
+    created_at: string;
     status: string;
 }
 
@@ -32,7 +32,7 @@ export const SelectExistingRouteModal: React.FC<SelectExistingRouteModalProps> =
     };
 
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Adicionar a Rota Existente" maxWidth="max-w-lg">
+        <Modal isOpen={isOpen} onClose={onClose} title="Adicionar a Rota Existente" maxWidth="max-w-lg" closeOnBackdropClick={false} closeOnEscape={false} showCloseButton={false}>
             <div className="space-y-4">
                 <p className="text-gray-300">Selecione uma das rotas abertas abaixo para adicionar os chamados.</p>
                 <div className="max-h-60 overflow-y-auto space-y-2 pr-2 sidebar-scroll">
@@ -49,7 +49,7 @@ export const SelectExistingRouteModal: React.FC<SelectExistingRouteModalProps> =
                                 />
                                 <div className="ml-4">
                                     <p className="font-semibold text-white">{route.region}</p>
-                                    <p className="text-sm text-gray-400">{route.chamadoIds.length} chamado(s) na rota</p>
+                                    <p className="text-sm text-gray-400">{(route.chamado_ids || []).length} chamado(s) na rota</p>
                                 </div>
                             </label>
                         ))
@@ -59,9 +59,10 @@ export const SelectExistingRouteModal: React.FC<SelectExistingRouteModalProps> =
                 </div>
             </div>
             <div className="flex justify-end space-x-3 pt-6 mt-4 border-t border-gray-700">
-                <button type="button" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+                <button type="button" name="cancel" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
                 <button
                     type="button"
+                    name="addToRoute"
                     onClick={handleConfirm}
                     disabled={selectedRouteId === null}
                     className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors disabled:opacity-50"

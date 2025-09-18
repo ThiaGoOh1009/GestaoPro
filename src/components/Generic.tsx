@@ -18,27 +18,41 @@ export const ClientTableSkeleton = () => (
     </div>
 );
 
-export const InputField = ({ label, id, required = false, ...props }) => (
-    <div>
-        <label htmlFor={id} className="block text-sm font-medium text-gray-300 mb-1">
-            {label}
-            {required && <span className="text-red-400 ml-1">*</span>}
-        </label>
-        <input 
-            id={id} 
-            required={required} 
-            {...props} 
-            className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 transition disabled:opacity-50" 
-        />
-    </div>
-);
+export const InputField = ({ label, id, name, required = false, ...props }) => {
+    const isNumeric = props.type === 'number' || props.inputMode === 'numeric' || props.inputMode === 'decimal';
+    
+    const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+        // Only select text on non-touch devices to avoid the "copy/paste" menu on mobile.
+        const isTouchDevice = 'ontouchstart' in window || navigator.maxTouchPoints > 0;
+        if (isNumeric && !isTouchDevice) {
+            e.target.select();
+        }
+    };
+    
+    return (
+        <div>
+            <label htmlFor={id} className="block text-sm font-medium text-gray-300 mb-1">
+                {label}
+                {required && <span className="text-red-400 ml-1">*</span>}
+            </label>
+            <input 
+                id={id}
+                name={name}
+                required={required}
+                onFocus={handleFocus}
+                {...props} 
+                className="w-full bg-gray-700 text-white rounded-lg px-4 py-2 border border-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-400 transition disabled:opacity-50" 
+            />
+        </div>
+    );
+};
 
-export const Switch = ({ label, enabled, onChange }) => (
+export const Switch = ({ label, enabled, onChange, name }) => (
     <label className="flex items-center justify-between cursor-pointer bg-gray-700/60 p-4 rounded-lg hover:bg-gray-700 transition-colors">
         <span className="font-medium text-white">{label}</span>
         <div className={`relative inline-flex items-center h-6 rounded-full w-11 transition-colors ${enabled ? 'bg-blue-600' : 'bg-gray-600'}`}>
             <span className={`inline-block w-4 h-4 transform bg-white rounded-full transition-transform ${enabled ? 'translate-x-[22px]' : 'translate-x-0.5'}`} />
         </div>
-        <input type="checkbox" className="hidden" checked={enabled} onChange={onChange} />
+        <input type="checkbox" name={name} className="hidden" checked={enabled} onChange={onChange} />
     </label>
 );

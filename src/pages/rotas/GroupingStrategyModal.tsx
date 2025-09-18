@@ -16,13 +16,14 @@ const GroupingIcon = ({ className }) => (
 
 export const GroupingStrategyModal = ({ isOpen, onClose, onSeparateByRegion, onGroupAsSingle, onAddToExisting }) => {
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title="Como Deseja Criar a Rota?" maxWidth="max-w-xl">
+        <Modal isOpen={isOpen} onClose={onClose} title="Como Deseja Criar a Rota?" maxWidth="max-w-xl" closeOnBackdropClick={false} closeOnEscape={false} showCloseButton={false}>
             <div className="space-y-6">
                 <p className="text-gray-300 text-center">
                     Escolha como os chamados selecionados serão organizados.
                 </p>
                 <div className="space-y-4">
                     <button 
+                        name="separateByRegion"
                         onClick={onSeparateByRegion}
                         className="w-full flex items-center text-left p-4 bg-gray-700/50 rounded-lg text-white hover:bg-gray-700 hover:ring-2 hover:ring-blue-500 transition-all focus:outline-none focus:ring-2 focus:ring-blue-500"
                     >
@@ -33,6 +34,7 @@ export const GroupingStrategyModal = ({ isOpen, onClose, onSeparateByRegion, onG
                         </div>
                     </button>
                     <button
+                        name="groupAsSingle"
                         onClick={onGroupAsSingle}
                         className="w-full flex items-center text-left p-4 bg-gray-700/50 rounded-lg text-white hover:bg-gray-700 hover:ring-2 hover:ring-green-500 transition-all focus:outline-none focus:ring-2 focus:ring-green-500"
                     >
@@ -43,6 +45,7 @@ export const GroupingStrategyModal = ({ isOpen, onClose, onSeparateByRegion, onG
                         </div>
                     </button>
                     <button
+                        name="addToExisting"
                         onClick={onAddToExisting}
                         className="w-full flex items-center text-left p-4 bg-gray-700/50 rounded-lg text-white hover:bg-gray-700 hover:ring-2 hover:ring-purple-500 transition-all focus:outline-none focus:ring-2 focus:ring-purple-500"
                     >
@@ -53,6 +56,11 @@ export const GroupingStrategyModal = ({ isOpen, onClose, onSeparateByRegion, onG
                         </div>
                     </button>
                 </div>
+            </div>
+            <div className="flex justify-end pt-6 mt-6 border-t border-gray-700">
+                <button type="button" name="cancel" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">
+                    Cancelar
+                </button>
             </div>
         </Modal>
     );

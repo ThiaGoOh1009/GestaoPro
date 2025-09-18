@@ -58,14 +58,15 @@ export const LogPanel = ({ isOpen, onClose, logs, onClear }) => {
             <header
                 className="flex-shrink-0 flex justify-between items-center p-3 border-b border-gray-700 cursor-move"
                 onMouseDown={handleMouseDown}
+                data-dev-id="LogPanel-header"
             >
                 <h4 className="font-semibold text-sm text-white">Painel de Logs</h4>
                 <div className="flex items-center space-x-2">
-                    <button onClick={onClear} className="px-3 py-1 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 rounded transition-colors" aria-label="Limpar logs">Limpar</button>
-                    <button onClick={onClose} className="p-1 text-gray-400 hover:text-white transition-colors" aria-label="Fechar painel"><IconWrapper className="w-4 h-4"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></IconWrapper></button>
+                    <button onClick={onClear} className="px-3 py-1 text-xs text-gray-300 bg-gray-700 hover:bg-gray-600 rounded transition-colors" aria-label="Limpar logs" data-dev-id="LogPanel-clear-button">Limpar</button>
+                    <button onClick={onClose} className="p-1 text-gray-400 hover:text-white transition-colors" aria-label="Fechar painel" data-dev-id="LogPanel-close-button"><IconWrapper className="w-4 h-4"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></IconWrapper></button>
                 </div>
             </header>
-            <div ref={scrollRef} className="p-3 overflow-y-auto text-xs space-y-2">
+            <div ref={scrollRef} className="p-3 overflow-y-auto text-xs space-y-2" data-dev-id="LogPanel-content">
                 {logs.length === 0 ? (<p className="text-gray-500 italic text-center py-4">Nenhuma ação registrada.</p>) : (
                     logs.map((log, index) => (
                         <div key={index} className="flex items-start bg-gray-900/50 p-2 rounded-md">

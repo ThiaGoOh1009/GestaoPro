@@ -1,744 +1,1076 @@
-import { capitalizeWords, maskPhone, maskZip } from '../utils/helpers';
+import { supabase } from './supabase';
+import { capitalizeWords } from '../utils/helpers';
+import { DATABASE_SCHEMA } from './schema';
+import { REGIOES_FOZ } from '../pages/regioes/regioes-foz';
 
+// Helper para tratar erros do Supabase de forma consistente
+const handleSupabaseError = (error: any, context: string) => {
+    console.error(`Supabase error in ${context}:`, error);
+
+    // If the error is not a structured object, stringify it directly.
+    if (typeof error !== 'object' || error === null) {
+        throw new Error(`Erro no banco de dados (${context}): ${String(error)}`);
+    }
+
+    // Attempt to build a detailed message from PostgREST error properties.
+    const messageParts = [];
+    if (error.message && typeof error.message === 'string') {
+         // Avoid adding the generic "[object Object]"
+        if (!error.message.includes('[object Object]')) {
+             messageParts.push(error.message);
+        }
+    }
+    if (error.details && typeof error.details === 'string') {
+        messageParts.push(`Detalhes: ${error.details}`);
+    }
+    if (error.hint && typeof error.hint === 'string') {
+        messageParts.push(`Dica: ${error.hint}`);
+    }
+
+    // If we have structured parts, join them.
+    if (messageParts.length > 0) {
+        throw new Error(`Erro no banco de dados (${context}): ${messageParts.join(' ')}`);
+    }
+    
+    // Fallback for unexpected error objects: serialize the whole thing.
+    // This prevents '[object Object]' and provides full context for debugging.
+    try {
+        // Use a replacer to avoid issues and get more info from Error objects
+        const replacer = (key, value) => {
+            if (value instanceof Error) {
+                return { message: value.message, stack: value.stack };
+            }
+            return value;
+        };
+        const fullError = JSON.stringify(error, replacer, 2);
+        
+        // Final check to avoid the dreaded string
+        if (fullError === '{}' || fullError.includes('[object Object]')) {
+             throw new Error(`Erro no banco de dados (${context}): Ocorreu um erro de comunicação. Verifique o console para detalhes e confirme se as políticas de RLS (Row Level Security) estão configuradas corretamente para esta tabela no Supabase.`);
+        }
+
+        throw new Error(`Erro no banco de dados (${context}): ${fullError}`);
+    } catch (e) {
+        // Catch potential circular structure in JSON.stringify
+        throw new Error(`Erro no banco de dados (${context}): Ocorreu um erro não serializável. Verifique o console para detalhes.`);
+    }
+};
+
+// Configurações de UI ainda podem usar localStorage
 export const storage = {
     loadClientFieldSettings: () => {
         try { const settings = localStorage.getItem('clientFieldSettings'); return settings ? JSON.parse(settings) : { email: false, phone: false }; }
         catch (e) { return { email: false, phone: false }; }
     },
     saveClientFieldSettings: (settings) => { 
-        try {
-            localStorage.setItem('clientFieldSettings', JSON.stringify(settings));
-        } catch (e) {
-            console.error("Failed to save settings:", e);
-            alert("Erro: Não foi possível salvar as configurações.");
-        }
+        try { localStorage.setItem('clientFieldSettings', JSON.stringify(settings)); } 
+        catch (e) { console.error("Failed to save settings:", e); alert("Erro: Não foi possível salvar as configurações."); }
     },
 };
 
-export const backend = {
-    getClientes: async (): Promise<any[]> => {
-        try {
-            let clients = JSON.parse(localStorage.getItem('clients'));
-            if (!clients) {
-                clients = [
-                    { id: 1, customerType: 'PJ', document: '11.222.333/0001-44', legalName: 'Tecnologia Inovadora Ltda', tradeName: 'Tech Inova', contactName: 'Carlos Silva', email: 'contato@techinova.com', phone: '(11) 98765-4321', status: 'Ativo', address: { street: 'Av. Paulista', number: '1000', neighborhood: 'Bela Vista', region: '', city: 'São Paulo', state: 'SP', zip: '01310-100' }, location: { lat: -23.5613, lng: -46.6565 } },
-                    { id: 2, customerType: 'PF', document: '123.456.789-00', legalName: 'Maria Oliveira', tradeName: '', contactName: 'Maria Oliveira', email: 'maria.o@email.com', phone: '(21) 91234-5678', status: 'Ativo', address: { street: 'Av. Atlântica', number: '2000', neighborhood: 'Copacabana', region: '', city: 'Rio de Janeiro', state: 'RJ', zip: '22070-001' }, location: { lat: -22.9715, lng: -43.1825 } },
-                    { id: 3, customerType: 'PJ', document: '44.555.666/0001-77', legalName: 'Comércio Varejista Brasil S.A.', tradeName: 'Varejo Brasil', contactName: 'Ana Souza', email: 'ana.s@varejobrasil.com', phone: '(31) 99999-8888', status: 'Inativo', address: { street: 'Av. Afonso Pena', number: '3000', neighborhood: 'Centro', region: '', city: 'Belo Horizonte', state: 'MG', zip: '30130-007' }, location: { lat: -19.9245, lng: -43.9352 } },
-                    { id: 4, customerType: 'PJ', document: '55.123.456/0001-88', legalName: 'Hotelaria Vistas das Cataratas Ltda', tradeName: 'Hotel Vistas Cataratas', contactName: 'Ricardo Mendes', email: 'gerencia@hotelvistas.com.br', phone: '(45) 99876-5432', status: 'Ativo', address: { street: 'Av. das Cataratas', number: '1234', neighborhood: 'Vila Yolanda', region: 'Região do Centro/Vila Yolanda', city: 'Foz do Iguaçu', state: 'PR', zip: '85853-000' }, location: { lat: -25.5683, lng: -54.5517 } },
-                    { id: 5, customerType: 'PJ', document: '66.789.012/0001-99', legalName: 'Sabor da Fronteira Gastronomia Ltda', tradeName: 'Restaurante Sabor da Fronteira', contactName: 'Juliana Costa', email: 'contato@sabordafronteira.com', phone: '(45) 99123-8765', status: 'Ativo', address: { street: 'Av. Brasil', number: '500', neighborhood: 'Centro', region: 'Região do Centro/Vila Yolanda', city: 'Foz do Iguaçu', state: 'PR', zip: '85851-000' }, location: { lat: -25.5460, lng: -54.5857 } },
-                    { id: 6, customerType: 'PJ', document: '77.345.678/0001-00', legalName: 'Foz Explorer Viagens e Turismo EIRELI', tradeName: 'Agência Foz Explorer', contactName: 'Fernando Lima', email: 'fernando.lima@fozexplorer.com', phone: '(45) 98877-4455', status: 'Inativo', address: { street: 'Rua Almirante Barroso', number: '2020', neighborhood: 'Centro', region: 'Região do Centro/Vila Yolanda', city: 'Foz do Iguaçu', state: 'PR', zip: '85851-010' }, location: { lat: -25.5413, lng: -54.5802 } },
-                    { id: 7, customerType: 'PJ', document: '17.890.123/0001-11', legalName: 'Supermercado Sol Nascente Ltda', tradeName: 'Supermercado Sol', contactName: 'Mariana Lima', email: 'contato@supersol.com', phone: '(45) 98765-1122', status: 'Ativo', address: { street: 'Av. Ranieri Mazzilli', number: '500', neighborhood: 'Jardim Três Fronteiras', region: 'Região Tres Lagoas', city: 'Foz do Iguaçu', state: 'PR', zip: '85862-210' }, location: { lat: -25.4957, lng: -54.5694 } },
-                    { id: 8, customerType: 'PJ', document: '18.901.234/0001-22', legalName: 'Padaria Pão Quente & Cia', tradeName: 'Padaria Pão Quente', contactName: 'Roberto Almeida', email: 'roberto@paoquente.com', phone: '(45) 98765-2233', status: 'Ativo', address: { street: 'Rua Pompéu de Toledo', number: '123', neighborhood: 'Loteamento Três Lagoas', region: 'Região Tres Lagoas', city: 'Foz do Iguaçu', state: 'PR', zip: '85862-500' }, location: { lat: -25.4881, lng: -54.5752 } },
-                    { id: 9, customerType: 'PJ', document: '19.012.345/0001-33', legalName: 'Farmácia Bem Estar Foz Ltda', tradeName: 'Farmácia Bem Estar', contactName: 'Lucia Ferraz', email: 'lucia@bemestarfoz.com', phone: '(45) 98765-3344', status: 'Ativo', address: { street: 'Av. Tancredo Neves', number: '6731', neighborhood: 'Vila C Nova', region: 'Região da Vila C', city: 'Foz do Iguaçu', state: 'PR', zip: '85867-900' }, location: { lat: -25.4593, lng: -54.5855 } },
-                    { id: 10, customerType: 'PJ', document: '20.123.456/0001-44', legalName: 'Estilo Modas e Confecções', tradeName: 'Loja de Roupas Estilo', contactName: 'Beatriz Costa', email: 'bia@estilomodas.com', phone: '(45) 98765-4455', status: 'Inativo', address: { street: 'Rua B', number: '456', neighborhood: 'Vila C Velha', region: 'Região da Vila C', city: 'Foz do Iguaçu', state: 'PR', zip: '85867-901' }, location: { lat: -25.4620, lng: -54.5821 } },
-                    { id: 11, customerType: 'PF', document: '111.222.333-44', legalName: 'João Pereira da Silva', tradeName: '', contactName: 'João Pereira', email: 'joao.pereira@email.com', phone: '(45) 98765-5566', status: 'Ativo', address: { street: 'Rua Cláudio Coutinho', number: '789', neighborhood: 'Parque Residencial Morumbi I', region: 'Região do São Francisco/Morumbi', city: 'Foz do Iguaçu', state: 'PR', zip: '85858-200' }, location: { lat: -25.5532, lng: -54.5478 } },
-                    { id: 12, customerType: 'PJ', document: '21.234.567/0001-55', legalName: 'Consultório Dentário Sorriso Perfeito', tradeName: 'Consultório Sorriso', contactName: 'Dr. Fábio Martins', email: 'fabio.m@consultoriosorriso.com', phone: '(45) 98765-6677', status: 'Ativo', address: { street: 'Av. Juscelino Kubitscheck', number: '3321', neighborhood: 'Portal da Foz', region: 'Região do São Francisco/Morumbi', city: 'Foz do Iguaçu', state: 'PR', zip: '85851-210' }, location: { lat: -25.5419, lng: -54.5586 } },
-                    { id: 13, customerType: 'PJ', document: '22.345.678/0001-66', legalName: 'Açougue Boi Bom de Foz', tradeName: 'Açougue Boi Bom', contactName: 'Sr. Valdir', email: 'valdir@boibom.com', phone: '(45) 98765-7788', status: 'Ativo', address: { street: 'Av. Morenitas', number: '999', neighborhood: 'Jardim das Flores', region: 'Região do Porto Meira', city: 'Foz do Iguaçu', state: 'PR', zip: '85854-410' }, location: { lat: -25.5925, lng: -54.5739 } }
-                ];
-                localStorage.setItem('clients', JSON.stringify(clients));
-            }
-            return clients;
-        } catch (e) { return []; }
+// O objeto 'backend' agora é 'supabaseService' e interage com o Supabase
+export const supabaseService = {
+    // --- ENTIDADES (Clientes/Fornecedores) ---
+    getClientes: async () => {
+        const { data, error } = await supabase.from('entities').select('*').eq('is_client', true).order('trade_name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getClientes');
+        return data || [];
     },
-    saveCliente: async (clientData) => {
-        const clients = await backend.getClientes();
-        
-        if (clientData.address && clientData.address.neighborhood) {
-            const neighborhood = clientData.address.neighborhood.trim();
+    getFornecedores: async () => {
+        const { data, error } = await supabase.from('entities').select('*').eq('is_supplier', true).order('trade_name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getFornecedores');
+        return data || [];
+    },
+    getAllEntities: async () => {
+        const { data, error } = await supabase.from('entities').select('*');
+        if (error) handleSupabaseError(error, 'getAllEntities');
+        return data || [];
+    },
+    saveEntidade: async (entityData) => {
+        if (entityData.address?.neighborhood) {
+            const neighborhood = (entityData.address.neighborhood || '').trim();
             if (neighborhood) {
-                const regioes = await backend.getRegioes();
-                const foundRegion = regioes.find(r => 
-                    r.neighborhoods.some(n => n.trim().toLowerCase() === neighborhood.toLowerCase())
-                );
+                const { data: regioes, error: regioesError } = await supabase.from('regioes').select('name, neighborhoods');
+                if (regioesError) handleSupabaseError(regioesError, 'saveEntidade (fetch regioes)');
+                const foundRegion = regioes?.find(r => r.neighborhoods?.some(n => n && n.trim().toLowerCase() === neighborhood.toLowerCase()));
+                entityData.address.region = foundRegion ? foundRegion.name : '';
+                if (!foundRegion) {
+                    // Manual upsert to handle count increment.
+                    const { data: existingPending, error: selectError } = await supabase
+                        .from('pending_neighborhoods')
+                        .select('id, count')
+                        .eq('name', neighborhood)
+                        .maybeSingle();
 
-                if (foundRegion) {
-                    clientData.address.region = foundRegion.name;
-                } else {
-                    clientData.address.region = ''; 
-                    await backend.addPendingNeighborhood(neighborhood);
-                }
-            } else {
-                 clientData.address.region = '';
-            }
-        }
-
-        if (clientData.id) {
-            const index = clients.findIndex(c => c.id === clientData.id);
-            if (index !== -1) clients[index] = clientData;
-        } else {
-            clientData.id = Date.now();
-            clients.push(clientData);
-        }
-        try {
-            localStorage.setItem('clients', JSON.stringify(clients));
-        } catch(e) {
-            console.error("Failed to save client data:", e);
-            alert("Erro: Não foi possível salvar os dados do cliente.");
-            throw e;
-        }
-        return clients;
-    },
-    deleteCliente: async (id) => {
-        let clients = await backend.getClientes();
-        clients = clients.filter(c => c.id !== id);
-        try {
-            localStorage.setItem('clients', JSON.stringify(clients));
-        } catch (e) {
-            console.error("Failed to delete client data:", e);
-            alert("Erro: Não foi possível excluir os dados do cliente.");
-            throw e;
-        }
-        return clients;
-    },
-     getProdutos: async () => {
-        try {
-            let products = JSON.parse(localStorage.getItem('products'));
-            if (!products) {
-                products = [
-                    { id: 101, type: 'Produto', name: 'Roteador Wi-Fi 6 Mesh', category: 'Hardware', description: 'Roteador de alta performance para redes domésticas e empresariais.', price: 799.90, stock: 50 },
-                    { id: 102, type: 'Serviço', name: 'Instalação de Rede Estruturada', category: 'Infraestrutura', description: 'Serviço completo de passagem de cabos e configuração de rede.', price: 1500.00, stock: null },
-                    { id: 103, type: 'Produto', name: 'Câmera de Segurança IP Full HD', category: 'Segurança', description: 'Câmera com visão noturna e acesso remoto via aplicativo.', price: 349.90, stock: 120 },
-                    { id: 104, type: 'Serviço', name: 'Contrato de Suporte Técnico Mensal', category: 'Suporte', description: 'Plano de suporte técnico remoto e presencial para empresas.', price: 450.00, stock: null },
-                    { id: 105, type: 'Produto', name: 'Switch 24 Portas Gigabit', category: 'Hardware', description: 'Switch gerenciável para otimização de tráfego de rede.', price: 1299.00, stock: 30 },
-                    { id: 106, type: 'Serviço', name: 'Configuração de Firewall', category: 'Segurança', description: 'Implementação de regras de segurança e políticas de acesso.', price: 800.00, stock: null },
-                    { id: 107, type: 'Produto', name: 'No-break Senoidal 1500VA', category: 'Energia', description: 'Proteção para equipamentos sensíveis contra quedas de energia.', price: 950.50, stock: 45 },
-                    { id: 108, type: 'Serviço', name: 'Visita Técnica Avulsa', category: 'Suporte', description: 'Atendimento técnico para resolução de problemas pontuais.', price: 250.00, stock: null }
-                ];
-                localStorage.setItem('products', JSON.stringify(products));
-            }
-            return products;
-        } catch (e) { return []; }
-    },
-    saveProduto: async (productData) => {
-        const products = await backend.getProdutos();
-        if (productData.id) {
-            const index = products.findIndex(p => p.id === productData.id);
-            if (index !== -1) {
-                products[index] = productData; // Simplified logic for clarity and correctness
-            }
-        } else {
-            productData.id = Date.now();
-            products.push(productData);
-        }
-        try {
-            localStorage.setItem('products', JSON.stringify(products));
-        } catch(e) {
-            console.error("Failed to save product data:", e);
-            alert("Erro: Não foi possível salvar os dados do produto.");
-            throw e;
-        }
-        return products;
-    },
-    deleteProduto: async (id) => {
-        let products = await backend.getProdutos();
-        products = products.filter(p => p.id !== id);
-        try {
-            localStorage.setItem('products', JSON.stringify(products));
-        } catch(e) {
-            console.error("Failed to delete product data:", e);
-            alert("Erro: Não foi possível excluir os dados do produto.");
-            throw e;
-        }
-        return products;
-    },
-    getCategories: () => {
-        try {
-            const cats = localStorage.getItem('productCategories');
-            if (cats) return JSON.parse(cats);
-            const defaultCats = {
-                produtos: ['Hardware', 'Segurança', 'Energia', 'Software'],
-                servicos: ['Infraestrutura', 'Suporte', 'Consultoria', 'Manutenção']
-            };
-            backend.saveCategories(defaultCats);
-            return defaultCats;
-        } catch (e) {
-            console.error("Failed to load categories:", e);
-            return { produtos: [], servicos: [] };
-        }
-    },
-    saveCategories: (categories) => {
-        try {
-            localStorage.setItem('productCategories', JSON.stringify(categories));
-        } catch (e) {
-            console.error("Failed to save categories:", e);
-            alert("Erro ao salvar categorias.");
-        }
-    },
-    getChamados: async (): Promise<any[]> => {
-        try {
-            let chamados = JSON.parse(localStorage.getItem('chamados'));
-            if (!chamados) {
-                chamados = [
-                    // --- Região do Centro/Vila Yolanda ---
-                    {
-                        id: 301,
-                        clientId: 4,
-                        clientName: 'Hotel Vistas Cataratas',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Alta',
-                        equipment: 'Rede Wi-Fi Hóspedes',
-                        problemDescription: 'Wi-Fi instável nos quartos do 5º andar. Hóspedes reclamando de quedas constantes de conexão.',
-                        solutionDescription: '',
-                        items: [{ productId: 108, name: 'Visita Técnica Avulsa', quantity: 1, unitPrice: 250.00, totalPrice: 250.00 }],
-                        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago
-                    },
-                    {
-                        id: 302,
-                        clientId: 5,
-                        clientName: 'Restaurante Sabor da Fronteira',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Alta',
-                        equipment: 'Impressora de Pedidos Cozinha',
-                        problemDescription: 'A impressora térmica da cozinha não está imprimindo os pedidos enviados pelo caixa 1. Já foi reiniciada.',
-                        solutionDescription: '',
-                        items: [],
-                        createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
-                    },
-                    {
-                        id: 303,
-                        clientId: 6,
-                        clientName: 'Agência Foz Explorer',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Média',
-                        equipment: 'Infraestrutura de Rede',
-                        problemDescription: 'Necessário instalar um novo ponto de rede na sala de vendas para um novo computador.',
-                        solutionDescription: '',
-                        items: [{ productId: 102, name: 'Instalação de Rede Estruturada', quantity: 1, unitPrice: 1500.00, totalPrice: 1500.00 }],
-                        createdAt: new Date().toISOString(),
-                    },
-                    // --- Região Tres Lagoas ---
-                    {
-                        id: 304,
-                        clientId: 7,
-                        clientName: 'Supermercado Sol',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Alta',
-                        equipment: 'Balança Toledo',
-                        problemDescription: 'Balança do setor de açougue está com o peso desregulado. Precisa de aferição urgente.',
-                        solutionDescription: '',
-                        items: [],
-                        createdAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), // 3 hours ago
-                    },
-                    {
-                        id: 305,
-                        clientId: 8,
-                        clientName: 'Padaria Pão Quente',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Média',
-                        equipment: 'Sistema PDV',
-                        problemDescription: 'O sistema do Ponto de Venda fica muito lento nos horários de pico, entre 17h e 19h. Travando as vendas.',
-                        solutionDescription: '',
-                        items: [{ productId: 108, name: 'Visita Técnica Avulsa', quantity: 1, unitPrice: 250.00, totalPrice: 250.00 }],
-                        createdAt: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000).toISOString(), // 1 day ago
-                    },
-                    // --- Região da Vila C ---
-                    {
-                        id: 306,
-                        clientId: 9,
-                        clientName: 'Farmácia Bem Estar',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Alta',
-                        equipment: 'Impressora Fiscal',
-                        problemDescription: 'Impressora fiscal Bematech apresentando erro na emissão do cupom. Código de erro 1008.',
-                        solutionDescription: '',
-                        items: [],
-                        createdAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), // 2 hours ago
-                    },
-                    {
-                        id: 307,
-                        clientId: 10,
-                        clientName: 'Loja de Roupas Estilo',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Média',
-                        equipment: 'DVR Câmeras',
-                        problemDescription: 'Uma das câmeras de segurança do estoque parou de gravar. A imagem aparece ao vivo, mas não salva.',
-                        solutionDescription: '',
-                        items: [{ productId: 103, name: 'Câmera de Segurança IP Full HD', quantity: 1, unitPrice: 349.90, totalPrice: 349.90 }],
-                        createdAt: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString(), // 3 days ago
-                    },
-                    // --- Região do São Francisco/Morumbi ---
-                    {
-                        id: 308,
-                        clientId: 11,
-                        clientName: 'João Pereira da Silva',
-                        billingType: 'Particular',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Média',
-                        equipment: 'Computador Pessoal',
-                        problemDescription: 'Meu computador de casa não liga. Aperto o botão e nada acontece, nenhuma luz acende.',
-                        solutionDescription: '',
-                        items: [],
-                        createdAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), // 4 hours ago
-                    },
-                    {
-                        id: 309,
-                        clientId: 12,
-                        clientName: 'Consultório Sorriso',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Agendamento',
-                        status: 'Aberto',
-                        schedulingType: 'Agendamento de serviço',
-                        preferredDate: new Date(Date.now() + 5 * 24 * 60 * 60 * 1000).toISOString(), // in 5 days
-                        estimatedDuration: '3 horas',
-                        problemDescription: 'Configurar rotina de backup em nuvem para o sistema de gerenciamento de pacientes.',
-                        items: [{ productId: 106, name: 'Configuração de Firewall', quantity: 1, unitPrice: 800.00, totalPrice: 800.00 }],
-                        createdAt: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(), // 4 days ago
-                    },
-                    // --- Região do Porto Meira ---
-                    {
-                        id: 310,
-                        clientId: 13,
-                        clientName: 'Açougue Boi Bom',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Agendamento',
-                        status: 'Aberto',
-                        schedulingType: 'Agendamento de serviço',
-                        preferredDate: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(), // in 3 days
-                        estimatedDuration: '2 horas',
-                        problemDescription: 'Realizar manutenção preventiva no servidor local, limpeza e verificação de logs.',
-                        items: [],
-                        createdAt: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), // 5 days ago
-                    },
-                    // --- Fora de Foz do Iguaçu (não devem aparecer na rota) ---
-                    {
-                        id: 311,
-                        clientId: 1,
-                        clientName: 'Tech Inova',
-                        billingType: 'Empresa',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Aberto',
-                        priority: 'Alta',
-                        equipment: 'Servidor Dell PowerEdge T40',
-                        problemDescription: 'Servidor apresentando alertas de erro de disco. Possível falha iminente no HD 2.',
-                        solutionDescription: '',
-                        items: [],
-                        createdAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(), // 6 hours ago
-                    },
-                    {
-                        id: 312,
-                        clientId: 2,
-                        clientName: 'Maria Oliveira',
-                        billingType: 'Particular',
-                        invoiced: false,
-                        inRoute: false,
-                        requestType: 'Chamado de Serviço',
-                        status: 'Em Andamento',
-                        priority: 'Baixa',
-                        equipment: 'Impressora HP',
-                        problemDescription: 'Comprei uma impressora nova e não consigo instalar no meu notebook. Preciso de ajuda.',
-                        solutionDescription: 'Acesso remoto agendado para amanhã.',
-                        items: [],
-                        createdAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), // 2 days ago
-                    },
-                ];
-                localStorage.setItem('chamados', JSON.stringify(chamados));
-            }
-            return chamados;
-        } catch (e) {
-            console.error("Failed to load chamados:", e);
-            return [];
-        }
-    },
-    saveChamado: async (chamadoData) => {
-        const chamados = await backend.getChamados();
-        if (chamadoData.id) {
-            const index = chamados.findIndex(c => c.id === chamadoData.id);
-            if (index !== -1) chamados[index] = {...chamados[index], ...chamadoData};
-        } else {
-            chamadoData.id = Date.now();
-            chamadoData.createdAt = new Date().toISOString();
-            chamadoData.invoiced = false;
-            chamadoData.inRoute = false;
-            chamadoData.status = 'Aberto';
-            chamados.unshift(chamadoData);
-        }
-        try {
-            localStorage.setItem('chamados', JSON.stringify(chamados));
-        } catch(e) {
-            console.error("Failed to save chamado data:", e);
-            alert("Erro: Não foi possível salvar os dados do chamado.");
-            throw e;
-        }
-        return chamados;
-    },
-    updateChamados: async (chamadoIds, updates) => {
-        const chamados = await backend.getChamados();
-        const updatedChamados = chamados.map(c => {
-            if (chamadoIds.includes(c.id)) {
-                return { ...c, ...updates };
-            }
-            return c;
-        });
-        try {
-            localStorage.setItem('chamados', JSON.stringify(updatedChamados));
-        } catch(e) { throw e; }
-        return updatedChamados;
-    },
-    deleteChamado: async (id) => {
-        let chamados = await backend.getChamados();
-        chamados = chamados.filter(c => c.id !== id);
-        try {
-            localStorage.setItem('chamados', JSON.stringify(chamados));
-        } catch (e) {
-            console.error("Failed to delete chamado data:", e);
-            alert("Erro: Não foi possível excluir os dados do chamado.");
-            throw e;
-        }
-        return chamados;
-    },
-    // --- EQUIPAMENTOS ---
-    getEquipamentos: async () => {
-        try {
-            let equipamentos = JSON.parse(localStorage.getItem('equipamentos'));
-            if (!equipamentos) {
-                equipamentos = [
-                    // Equipamentos
-                    ...Array.from({ length: 20 }, (_, i) => ({ id: `eq_caixa_${i + 1}`, type: 'Equipamento', name: `Caixa ${i + 1}` })),
-                    ...Array.from({ length: 5 }, (_, i) => ({ id: `eq_balcao_${i + 1}`, type: 'Equipamento', name: `Balcão ${i + 1}` })),
-                    ...Array.from({ length: 5 }, (_, i) => ({ id: `eq_cpd_${i + 1}`, type: 'Equipamento', name: `CPD ${i + 1}` })),
-                    ...Array.from({ length: 10 }, (_, i) => ({ id: `eq_escritorio_${i + 1}`, type: 'Equipamento', name: `Escritório ${i + 1}` })),
-                    ...Array.from({ length: 3 }, (_, i) => ({ id: `eq_padaria_${i + 1}`, type: 'Equipamento', name: `Padaria ${i + 1}` })),
-                    // Sistemas
-                    { id: 'sys_uniplus', type: 'Sistema', name: 'Uniplus' },
-                    { id: 'sys_toledo', type: 'Sistema', name: 'Toledo' },
-                    { id: 'sys_urano', type: 'Sistema', name: 'Urano' },
-                    { id: 'sys_filizola', type: 'Sistema', name: 'Filizola' },
-                    { id: 'sys_ponto', type: 'Sistema', name: 'Ponto' },
-                ];
-                localStorage.setItem('equipamentos', JSON.stringify(equipamentos));
-            }
-            return equipamentos;
-        } catch (e) { return []; }
-    },
-    saveEquipamento: async (equipamentoData) => {
-        const equipamentos = await backend.getEquipamentos();
-        if (equipamentoData.id) {
-            const index = equipamentos.findIndex(e => e.id === equipamentoData.id);
-            if (index !== -1) equipamentos[index] = equipamentoData;
-        } else {
-            equipamentoData.id = Date.now();
-            equipamentos.push(equipamentoData);
-        }
-        try {
-            localStorage.setItem('equipamentos', JSON.stringify(equipamentos));
-        } catch(e) { throw e; }
-        return equipamentos;
-    },
-    deleteEquipamento: async (id) => {
-        let equipamentos = await backend.getEquipamentos();
-        equipamentos = equipamentos.filter(e => e.id !== id);
-        try {
-            localStorage.setItem('equipamentos', JSON.stringify(equipamentos));
-        } catch (e) { throw e; }
-        return equipamentos;
-    },
-    getTemporaryEquipamentos: async () => {
-        try {
-            const temps = localStorage.getItem('temporaryEquipamentos');
-            return temps ? JSON.parse(temps) : [];
-        } catch (e) { return []; }
-    },
-    addTemporaryEquipamento: async (name) => {
-        const temps = await backend.getTemporaryEquipamentos();
-        const lowerCaseTemps = temps.map(t => t.toLowerCase());
-        if (!lowerCaseTemps.includes(name.toLowerCase())) {
-            temps.push(name);
-            try { localStorage.setItem('temporaryEquipamentos', JSON.stringify(temps)); } catch(e) { throw e; }
-        }
-        return temps;
-    },
-    deleteTemporaryEquipamento: async (name) => {
-        let temps = await backend.getTemporaryEquipamentos();
-        temps = temps.filter(t => t.toLowerCase() !== name.toLowerCase());
-         try { localStorage.setItem('temporaryEquipamentos', JSON.stringify(temps)); } catch(e) { throw e; }
-        return temps;
-    },
-    // --- REGIOES ---
-    getRegioes: async () => {
-        try {
-            let regioes = JSON.parse(localStorage.getItem('regioes'));
-            if (!regioes) {
-                regioes = [
-                    { id: 1, name: 'Região Tres Lagoas', neighborhoods: ['Alto Guarani', 'Arroio Leão Chácara Três Fronteiras', 'Conjunto Habitacional Fernanda', 'Conjunto Habitacional Novo Mundo', 'Conjunto Habitacional Sol de Maio', 'Conjunto Residencial Dourados', 'Conjunto Residencial Graúna', 'Conjunto Residencial Tucuruí', 'Gleba Guarani', 'Imóvel Foz do Iguaçu', 'Jardim Alvorada', 'Jardim Bandeirantes', 'Jardim Cedro', 'Jardim Congonhas', 'Jardim Ipanema', 'Jardim Mônaco', 'Jardim Porto Dourado', 'Jardim Santa Rita', 'Jardim Três Fronteiras', 'Jardim Vale do Sol', 'Jardim Vasco da Gama', 'Loteamento Don Ricardo', 'Loteamento Gleba Guarani', 'Loteamento Jardim Colombelli', 'Loteamento Jardim Imperial', 'Loteamento Jardim Madre Tereza I', 'Loteamento Jardim Madre Tereza II', 'Loteamento Menger', 'Loteamento Novo Mundo', 'Loteamento Pilarzinho', 'Loteamento Residencial Jacqueline', 'Loteamento Residencial Lagoa Vermelha', 'Loteamento São João', 'Loteamento Três Lagoas', 'Loteamento Witt', 'Parque Residencial Lagoa Azul', 'Parque Três Fronteiras (Imóvel M\'Boicy)', 'Vila Guarani', 'Vila Miranda', 'Vila Tibagi'] },
-                    { id: 2, name: 'Região da Vila C', neighborhoods: ['Vila C Nova', 'Vila C Velha', 'Jardim Almada', 'Ilha Acaray', 'Imóvel Gleba Bela Vista', 'Loteamento Bela Vista II', 'Loteamento Bela Vista de Itaipu - Parte I', 'Loteamento Budel', 'Jardim Califórnia', 'Cidade Nova I', 'Cidade Nova II', 'Loteamento Jardim Curitiba', 'Jardim Evangélico', 'Jardim Florença', 'Jardim Irma', 'Jardim Itá', 'Jardim Itaipu', 'Jardim Marisa', 'Jardim Nova Califórnia', 'Jardim Olívia', 'Jardim Princesa Diana', 'Parque Linear', 'Pólo Universitário', 'Porto Belo', 'Jardim Rose Magalhães', 'Parque Industrial e Comercial São Paulo', 'Loteamento São Roque', 'Vila São Sebastião', 'Jardim Universitário das Américas I', 'Jardim Universitário das Américas II', 'Jardim Veneza', 'Vila Rural'] },
-                    { id: 3, name: 'Região do São Francisco/Morumbi', neighborhoods: ['Mutirão 1º de Maio', 'Imóvel M\'Boicy', 'Jardim Copacabana II', 'Jardim Europa', 'Jardim Liberdade I', 'Jardim Pacaembu', 'Jardim San Rafael I', 'Jardim San Rafael II', 'Jardim São Miguel', 'Jardim Soledade I', 'Jardim Soledade II', 'Jardim Tarobá II', 'Jardim Terra e Lar', 'Loteamento Residencial Itália (Jardim Itália)', 'Loteamento Jardim Residencial Caiobá', 'Loteamento Rincão São Francisco (Cohapar III)', 'Parque Residencial Morumbi I', 'Parque Residencial Morumbi II', 'Parque Residencial Morumbi III', 'Parque Residencial Morumbi IV', 'Parque Residencial Santa Rita (Jardim Santa Rita)', 'Portal da Foz', 'Vila Borges', 'Vila das Batalhas', 'Vila Independente'] },
-                    { id: 4, name: 'Região do Porto Meira', neighborhoods: ['Condomínio Horizontal Fechado Quinta do Sol (Jardim Quinta do Sol)', 'Condomínio Lazer Helena', 'Condomínio Residencial Fechado Solar das Crisálidas (Conjunto Residencial Yang Ming)', 'Conjunto Remador', 'Conjunto Residencial Aristides Merhy (Profilurb I)', 'Conjunto Residencial Piracema (Profilurb II)', 'Jardim Ana Rouver', 'Jardim Boa Esperança', 'Jardim Cecília', 'Jardim das Flores', 'Jardim Elisa I', 'Jardim Elisa II', 'Jardim Guaíra', 'Jardim do Horto', 'Jardim Iara', 'Jardim Morenitas I', 'Jardim Morenitas II', 'Jardim Oriente', 'Jardim Polônia', 'Jardim Residencial Deville', 'Jardim Santa Cecília II', 'Jardim Tropical', 'Jardim Veraneio', 'Loteamento Bourbon', 'Loteamento Nossa Senhora da Luz (Jardim Nossa Senhora da Luz)', 'Loteamento Parque das Três Fronteiras', 'Parque Residencial Ouro Verde (Parque Ouro Verde)', 'Parque do Patriarca', 'Sohab', 'Vila Adriana I', 'Vila Adriana II', 'Vila Padre Monti', 'Vila Shalom'] },
-                    { id: 5, name: 'Região do Jardim São Paulo', neighborhoods: ['Chácaras Dom Emílio', 'Cognópolis', 'Condomínio Residencial Fechado Village Iguaçu', 'Jardim Copacabana I', 'Jardim Dom Miguel Osman', 'Jardim Dom Pedro I', 'Jardim Dona Fátima Osman', 'Jardim Dona Leila', 'Jardim Estela', 'Jardim Niterói I', 'Jardim Niterói II', 'Jardim Panorama I', 'Jardim Panorama II', 'Jardim Primavera', 'Jardim Residencial Bela Vista', 'Jardim Residencial São Roque I', 'Jardim Residencial São Roque II', 'Jardim São Bento', 'Jardim São Luiz', 'Jardim São Paulo I', 'Jardim São Paulo II', 'Jardim Residencial São Roque III', 'Jardim Três Pinheiros', 'Jardim Vitória', 'Linha Guarapuava', 'Loteamento Lindóia', 'Loteamento Residencial Cohiguaçu', 'Loteamento Residencial Iguaçu'] },
-                    { id: 6, name: 'Região do Jardim América', neighborhoods: ['Condomínio Horizontal Fechado Maria Tereza', 'Condomínio Horizontal Fechado Moradas do Parque', 'Imóvel Madeireira', 'Imóvel Nardina Duso', 'Imóvel Olaria Fulgêncio', 'Imóvel Portes', 'Imóvel Porto Alegre', 'Imóvel Rodrigues "A"', 'Imóvel Santo Inácio', 'Jardim América', 'Jardim Boa Vista', 'Jardim Central', 'Jardim Cristina', 'Jardim das Nações', 'Jardim Jupira', 'Loteamento Paraguaçu', 'Loteamento Renato Festugato (Jardim Festugato)', 'Parque Monjolo (Jardim Comercial das Bandeiras)', 'Vila Brasília', 'Vila Paraguaia', 'Vila Pérola', 'Vila Portes'] },
-                    { id: 7, name: 'Região do Parque Imperatriz', neighborhoods: ['Condomínio Arco di Roma', 'Conjunto Habitacional Fechado Lago dos Cisnes', 'Conjunto Habitacional Parque Imperatriz', 'Conjunto Habitacional Plaza', 'Distrito Industrial', 'Jardim Ana Cristina', 'Jardim Aurora', 'Jardim Canadá I', 'Jardim Canadá II', 'Jardim Curitibano IV', 'Jardim das Palmeiras I', 'Jardim das Palmeiras II', 'Jardim Dona Rocca', 'Jardim Duarte', 'Jardim Lancaster I', 'Jardim Lancaster III', 'Jardim Lancaster IV', 'Jardim Lancaster V', 'Jardim Nacional', 'Parque Imperatriz', 'Parque Presidente II', 'Parque Residencial Três Bandeiras', 'Pilar Parque Campestre', 'Vila Braz', 'Vila Santo Antônio'] },
-                    { id: 8, name: 'Região da Vila A', neighborhoods: ['Condomínio Horizontal Fechado Porto Seguro', 'Conjunto Belvedere I', 'Loteamento Belvedere I', 'Conjunto Residencial Aporã', 'Jardim das Laranjeiras', 'Jardim Bárbara', 'Jardim Curitibano I', 'Jardim Curitibano II', 'Jardim Curitibano III', 'Jardim Estrela', 'Jardim Ipê I', 'Jardim Ipê II', 'Jardim Ipê III', 'Jardim Jasmim', 'Jardim Lancaster II', 'Jardim Norma', 'Jardim Paraná', 'Jardim Petrópolis', 'Jardim Santa Rosa', 'Parque Residencial Karla', 'Vila A', 'Vila B'] },
-                    { id: 9, name: 'Região do Centro/Vila Yolanda', neighborhoods: ['Centro', 'Vila Maracanã', 'Vila Itajubá (Jardim Itajubá)', 'Vila Remígio', 'Jardim Los Angeles', 'Condomínio Horizontal Fechado Residencial Central Park', 'Condomínio Horizontal Country Iguaçu', 'Jardim Eldorado', 'Jardim Esmeralda I', 'Jardim Esmeralda II', 'Jardim Guarapuava I', 'Jardim Guarapuava II', 'Jardim Iguaçu', 'Jardim Naipi', 'Jardim Social I', 'Jardim Social II', 'Jardim Tarobá (Cohapar I)', 'Loteamento Roth', 'Loteamento Parque M\'Boicy', 'Vila Bom Jesus', 'Vila Matilde', 'Vila Yolanda'] },
-                    { id: 10, name: 'Região do Campos do Iguaçu', neighborhoods: ['Alto São Francisco', 'Beverly Falls Park', 'Campos do Iguaçu I', 'Campos do Iguaçu II (Cohapar II)', 'Condomínio Fechado Residencial Castel Franco', 'Condomínio Horizontal Fechado Izadora Parque', 'Conjunto Libra I', 'Conjunto Libra II', 'Conjunto Libra III', 'Conjunto Libra IV', 'Flamboyant', 'Imóvel Acaraizinho', 'Imóvel Edmundo Weirich', 'Imóvel Sotelo', 'Jardim Acaray', 'Jardim Alice I', 'Jardim Alice II', 'Jardim Amazonas', 'Jardim Cappuccino', 'Jardim Cláudia', 'Jardim João Paulo II', 'Jardim Langwinski', 'Jardim Liberdade II', 'Jardim Manaus', 'Jardim Pólo Centro', 'Jardim Residencial Itamaraty (Jardim Itamaraty)', 'Loteamento Amauri Rainho', 'Loteamento Rincão São Francisco (Cohapar III) (parte)', 'Loteamento Santos Guglielmi', 'Parque Presidente I', 'Vila CR-1', 'Vila Militar'] },
-                    { id: 11, name: 'Região da Vila Carimã', neighborhoods: ['Condomínio Mata Verde', 'Jardim Comercial e Residencial Cataratas', 'Jardim Novo Horizonte', 'Loteamento Darcy Werner', 'Loteamento Dona Amanda', 'Loteamento João Gonçalves Batista', 'Parte Norte', 'Parte Sul', 'Vila Anita Garibaldi', 'Vila Carimã'] },
-                    { id: 12, name: 'Região Rural', neighborhoods: ['Região Rural Norte', 'Alto da Boa Vista', 'Área Itaipu Binacional', 'Gleba Passo Cuê', 'Região Rural Leste/Sul', 'Aeroporto', 'Imóvel Alwin', 'Vila Aparecidinha', 'Arroio Dourado (Gleba II)', 'Condomínio Residencial Campo dos Sonhos', 'Condomínio Chácara Natureza', 'Condomínio Residencial Serenologia', 'Linha Keller', 'Parque Nacional', 'Imóvel Tamanduá', 'Imóvel Tamanduazinho', 'Remanso Grande (Gleba I)', 'Sanga Funda', 'São João', 'Região Rural Bananal', 'Vila Bananal'] }
-                ];
-                localStorage.setItem('regioes', JSON.stringify(regioes));
-            }
-            return regioes;
-        } catch (e) { return []; }
-    },
-    saveRegiao: async (regiaoData) => {
-        const regioes = await backend.getRegioes();
-        if (regiaoData.id) {
-            const index = regioes.findIndex(r => r.id === regiaoData.id);
-            if (index !== -1) regioes[index] = regiaoData;
-        } else {
-            regiaoData.id = Date.now();
-            regioes.push(regiaoData);
-        }
-        try {
-            localStorage.setItem('regioes', JSON.stringify(regioes));
-        } catch(e) { throw e; }
-        return regioes;
-    },
-    deleteRegiao: async (id) => {
-        let regioes = await backend.getRegioes();
-        regioes = regioes.filter(r => r.id !== id);
-        try {
-            localStorage.setItem('regioes', JSON.stringify(regioes));
-        } catch (e) { throw e; }
-        return regioes;
-    },
-    // --- PENDING NEIGHBORHOODS ---
-    getPendingNeighborhoods: async () => {
-        try {
-            const pending = localStorage.getItem('pendingNeighborhoods');
-            return pending ? JSON.parse(pending) : [];
-        } catch (e) { return []; }
-    },
-    addPendingNeighborhood: async (neighborhood) => {
-        const pending = await backend.getPendingNeighborhoods();
-        const lowerCasePending = pending.map(p => p.toLowerCase());
-        const lowerCaseNeighborhood = neighborhood.toLowerCase();
-        if (!lowerCasePending.includes(lowerCaseNeighborhood)) {
-            pending.push(neighborhood);
-            try { localStorage.setItem('pendingNeighborhoods', JSON.stringify(pending)); } catch(e) { throw e; }
-        }
-        return pending;
-    },
-    deletePendingNeighborhood: async (neighborhood) => {
-        let pending = await backend.getPendingNeighborhoods();
-        const lowerCaseNeighborhood = neighborhood.toLowerCase();
-        pending = pending.filter(p => p.toLowerCase() !== lowerCaseNeighborhood);
-        try { localStorage.setItem('pendingNeighborhoods', JSON.stringify(pending)); } catch(e) { throw e; }
-        return pending;
-    },
-    updateClientsRegion: async (neighborhood, regionName) => {
-        const clients = await backend.getClientes();
-        let updated = false;
-        const updatedClients = clients.map(client => {
-            if (client.address && client.address.neighborhood && client.address.neighborhood.toLowerCase() === neighborhood.toLowerCase()) {
-                client.address.region = regionName;
-                updated = true;
-            }
-            return client;
-        });
-        if (updated) {
-            try { localStorage.setItem('clients', JSON.stringify(updatedClients)); } catch (e) { throw e; }
-        }
-        return updatedClients;
-    },
-    // --- ROTAS ---
-    getRotas: async (): Promise<any[]> => {
-        try {
-            const rotas = localStorage.getItem('rotas');
-            if (rotas) {
-                const parsed = JSON.parse(rotas);
-                return Array.isArray(parsed) ? parsed : [];
-            }
-            return [];
-        } catch (e) { 
-            console.error("Falha ao buscar ou analisar rotas do localStorage", e);
-            return []; 
-        }
-    },
-    saveRotas: async (rotasToSave) => {
-        try {
-            localStorage.setItem('rotas', JSON.stringify(rotasToSave));
-        } catch(e) { throw e; }
-        return rotasToSave;
-    },
-    deleteRota: async (id) => {
-        let rotas = await backend.getRotas();
-        rotas = rotas.filter(r => r.id !== id);
-        try {
-            localStorage.setItem('rotas', JSON.stringify(rotas));
-        } catch (e) { throw e; }
-        return rotas;
-    },
-    // --- CAIXA & FINANCEIRO ---
-    getCaixaTransactions: async () => {
-        try {
-            let transactions = JSON.parse(localStorage.getItem('caixa_transactions'));
-            if(!transactions) {
-                 transactions = [
-                    { id: 1, type: 'Particular', clientName: 'Maria Oliveira', description: 'Faturamento Chamado #202', amount: 350.00, date: new Date(2024, 6, 22).toISOString() }
-                 ];
-                 localStorage.setItem('caixa_transactions', JSON.stringify(transactions));
-            }
-            return transactions;
-        } catch(e) { return []; }
-    },
-    getFinanceiroEntries: async () => {
-        try {
-            let entries = JSON.parse(localStorage.getItem('financeiro_entries'));
-            if(!entries) {
-                 entries = [
-                     { id: 1, type: 'Empresa', clientName: 'Varejo Brasil', description: 'Faturamento Chamado #199', amount: 1200.00, dueDate: new Date(2024, 7, 15).toISOString(), status: 'Pendente' }
-                 ];
-                 localStorage.setItem('financeiro_entries', JSON.stringify(entries));
-            }
-            return entries;
-        } catch(e) { return []; }
-    },
-    bulkInvoiceChamados: async (chamadosToInvoice, paymentMethod) => {
-        const allChamados = await backend.getChamados();
-        const transactions = await backend.getCaixaTransactions();
-        const entries = await backend.getFinanceiroEntries();
-
-        const chamadosToInvoiceIds = chamadosToInvoice.map(c => c.id);
-        let itemsAdded = false;
-
-        for (const chamado of chamadosToInvoice) {
-            const totalValue = chamado.items?.reduce((acc, item) => acc + item.totalPrice, 0) || 0;
-            if (totalValue > 0) {
-                itemsAdded = true;
-                const description = `Faturamento Chamado #${chamado.id}`;
-                const entry = {
-                    id: Date.now() + Math.random(),
-                    type: chamado.billingType,
-                    clientName: chamado.clientName,
-                    description,
-                    amount: totalValue,
-                    date: new Date().toISOString()
-                };
-
-                if (paymentMethod === 'À Vista') {
-                    transactions.unshift(entry);
-                } else { // A Prazo
-                    entries.unshift({ ...entry, status: 'Pendente', dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() });
-                }
-            }
-        }
-        
-        const updatedChamados = allChamados.map(c => {
-            if (chamadosToInvoiceIds.includes(c.id)) {
-                return { ...c, invoiced: true, status: 'Concluído' };
-            }
-            return c;
-        });
-
-        try {
-            if (itemsAdded) {
-                if (paymentMethod === 'À Vista') {
-                    localStorage.setItem('caixa_transactions', JSON.stringify(transactions));
-                } else {
-                    localStorage.setItem('financeiro_entries', JSON.stringify(entries));
-                }
-            }
-            localStorage.setItem('chamados', JSON.stringify(updatedChamados));
-        } catch (e) {
-            throw new Error('Falha ao salvar faturamento em lote.');
-        }
-        return updatedChamados;
-    },
-    invoiceChamado: async (chamado, paymentMethod) => {
-        const totalValue = chamado.items?.reduce((acc, item) => acc + item.totalPrice, 0) || 0;
-
-        // 1. Add financial entry only if value > 0
-        if (totalValue > 0) {
-            const description = `Faturamento Chamado #${chamado.id}`;
-            const entry = {
-                id: Date.now(),
-                type: chamado.billingType,
-                clientName: chamado.clientName,
-                description,
-                amount: totalValue,
-                date: new Date().toISOString()
-            };
-
-            if (paymentMethod === 'À Vista') {
-                const transactions = await backend.getCaixaTransactions();
-                transactions.unshift(entry);
-                 try { localStorage.setItem('caixa_transactions', JSON.stringify(transactions)); } catch(e) { throw new Error('Falha ao salvar no caixa'); }
-            } else { // A Prazo
-                const entries = await backend.getFinanceiroEntries();
-                entries.unshift({ ...entry, status: 'Pendente', dueDate: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString() });
-                 try { localStorage.setItem('financeiro_entries', JSON.stringify(entries)); } catch(e) { throw new Error('Falha ao salvar no financeiro'); }
-            }
-        }
-
-        // 2. Mark chamado as invoiced and completed
-        const allChamados = await backend.getChamados();
-        const index = allChamados.findIndex(c => c.id === chamado.id);
-        if (index !== -1) {
-            allChamados[index].invoiced = totalValue > 0;
-            allChamados[index].status = 'Concluído';
-            try { localStorage.setItem('chamados', JSON.stringify(allChamados)); } catch(e) { throw new Error('Falha ao atualizar status do chamado'); }
-        }
-        
-        // 3. Check if route should be finalized
-        const allRotas = await backend.getRotas();
-        const rotaOfChamado = allRotas.find(r => Array.isArray(r.chamadoIds) && r.chamadoIds.includes(chamado.id));
-        
-        if (rotaOfChamado) {
-            const chamadosIdsInRota = rotaOfChamado.chamadoIds;
-            // Check status of all chamados in the route using the freshest `allChamados` data
-            const allCompleted = chamadosIdsInRota.every(chamadoId => {
-                const c = allChamados.find(ch => ch.id === chamadoId);
-                return c && c.status === 'Concluído';
-            });
-
-            if (allCompleted) {
-                const rotaIndex = allRotas.findIndex(r => r.id === rotaOfChamado.id);
-                if (rotaIndex !== -1) {
-                    allRotas[rotaIndex].status = 'Finalizada';
-                    try {
-                        localStorage.setItem('rotas', JSON.stringify(allRotas));
-                    } catch(e) {
-                        throw new Error('Falha ao finalizar a rota.');
+                    if (selectError) {
+                        handleSupabaseError(selectError, 'saveEntidade (select pending neighborhood)');
+                    } else if (existingPending) {
+                         // It exists, so increment the count.
+                        const { error: updateError } = await supabase
+                            .from('pending_neighborhoods')
+                            .update({ count: (existingPending.count || 0) + 1 })
+                            .eq('id', existingPending.id);
+                        if (updateError) handleSupabaseError(updateError, 'saveEntidade (update pending neighborhood count)');
+                    } else {
+                        // It doesn't exist, so insert it.
+                        const { error: insertError } = await supabase
+                            .from('pending_neighborhoods')
+                            .insert({ name: neighborhood, reference_address: entityData.address, count: 1 });
+                        if (insertError) handleSupabaseError(insertError, 'saveEntidade (insert pending neighborhood)');
                     }
                 }
             }
         }
         
-        return allChamados;
-    }
+        // REMOVED RECURRING FIELDS TO ALIGN WITH SCHEMA REFACTORING
+        delete (entityData as any).is_recurring;
+        delete (entityData as any).recurring_amount;
+        delete (entityData as any).recurring_due_day;
+
+        // Garante que o campo 'entity_type' legado seja removido ao salvar no novo formato.
+        if ('entity_type' in entityData) {
+            delete entityData.entity_type;
+        }
+
+        const { data, error } = await supabase.from('entities').upsert(entityData).select();
+        if (error) handleSupabaseError(error, 'saveEntidade');
+        return data;
+    },
+    deleteEntidade: async (id) => {
+        const { error } = await supabase.from('entities').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteEntidade');
+    },
+
+    // --- PRODUTOS ---
+    getProdutos: async () => {
+        const { data, error } = await supabase.from('products').select('*').order('name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getProdutos');
+        return data || [];
+    },
+    saveProduto: async (productData) => {
+        const { data, error } = await supabase.from('products').upsert(productData).select();
+        if (error) handleSupabaseError(error, 'saveProduto');
+        return data;
+    },
+    deleteProduto: async (id) => {
+        const { error } = await supabase.from('products').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteProduto');
+    },
+    getCategories: async () => {
+        const { data, error } = await supabase.from('product_categories').select('type, name');
+        if (error) handleSupabaseError(error, 'getCategories');
+        return (data || []).reduce((acc, cat) => {
+            if (!acc[cat.type]) acc[cat.type] = [];
+            acc[cat.type].push(cat.name);
+            return acc;
+        }, { produtos: [], servicos: [] });
+    },
+    saveCategories: async (categories) => {
+        const allCategories = [
+            ...categories.produtos.map(name => ({ type: 'produtos', name })),
+            ...categories.servicos.map(name => ({ type: 'servicos', name }))
+        ];
+        const { data: existingCategories, error: fetchError } = await supabase.from('product_categories').select('type, name');
+        if (fetchError) handleSupabaseError(fetchError, 'saveCategories (fetch)');
+
+        if (existingCategories) {
+            const toDelete = existingCategories.filter(e => !allCategories.some(c => c.type === e.type && c.name === e.name));
+            for (const cat of toDelete) {
+                const { error: deleteError } = await supabase.from('product_categories').delete().match({ type: cat.type, name: cat.name });
+                if (deleteError) handleSupabaseError(deleteError, `saveCategories (delete ${cat.name})`);
+            }
+        }
+        const { error: upsertError } = await supabase.from('product_categories').upsert(allCategories);
+        if (upsertError) handleSupabaseError(upsertError, 'saveCategories (upsert)');
+    },
+
+    // --- TEMPORARY PRODUCTS ---
+    getTemporaryProducts: async () => {
+        const { data, error } = await supabase.from('temporary_products').select('*').order('name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getTemporaryProducts');
+        return data || [];
+    },
+    addTemporaryProduct: async (productData) => {
+        // Manual upsert to bypass potential 'onConflict' issues if the UNIQUE constraint is missing in the user's DB.
+        const { data, error: selectError } = await supabase
+            .from('temporary_products')
+            .select('id')
+            .eq('name', productData.name)
+            .maybeSingle(); // Use maybeSingle to avoid error if not found
+
+        if (selectError) {
+            handleSupabaseError(selectError, 'addTemporaryProduct (select)');
+            return;
+        }
+
+        if (data) {
+            // Entry exists, update it. This preserves the ID.
+            const { error: updateError } = await supabase
+                .from('temporary_products')
+                .update({ price: productData.price }) // Only update the price, name is the key
+                .eq('id', data.id);
+            if (updateError) handleSupabaseError(updateError, 'addTemporaryProduct (update)');
+        } else {
+            // Entry doesn't exist, insert it.
+            const { error: insertError } = await supabase
+                .from('temporary_products')
+                .insert(productData);
+            if (insertError) handleSupabaseError(insertError, 'addTemporaryProduct (insert)');
+        }
+    },
+    deleteTemporaryProduct: async (id) => {
+        const { error } = await supabase.from('temporary_products').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteTemporaryProduct');
+    },
+    
+    // --- CHAMADOS ---
+    getChamados: async () => {
+        // Step 1: Fetch all chamados
+        const { data: chamados, error: chamadosError } = await supabase
+            .from('chamados')
+            .select('*')
+            .order('created_at', { ascending: false });
+        if (chamadosError) handleSupabaseError(chamadosError, 'getChamados (chamados)');
+        if (!chamados || chamados.length === 0) return [];
+
+        // Step 2: Fetch all related items and payments
+        const chamadoIds = chamados.map(c => c.id);
+
+        // Fetch items (critical for app function)
+        const { data: items, error: itemsError } = await supabase
+            .from('item')
+            .select('*')
+            .in('chamado_id', chamadoIds);
+        if (itemsError) handleSupabaseError(itemsError, 'getChamados (items)');
+        
+        // Fetch payments gracefully, allowing the app to function if this table is missing.
+        let payments: any[] = [];
+        const { data: paymentsData, error: paymentsError } = await supabase
+            .from('chamado_payments')
+            .select('*')
+            .in('chamado_id', chamadoIds);
+        
+        if (paymentsError) {
+            console.warn(`Supabase warning in getChamados (payments): Could not fetch payments. This might be due to a missing table or RLS policy. Error:`, paymentsError);
+        } else {
+            payments = paymentsData || [];
+        }
+        
+        // Step 3: Create maps for easy lookup
+        const itemsByChamadoId = (items || []).reduce((acc, item) => {
+            if (!acc[item.chamado_id]) acc[item.chamado_id] = [];
+            acc[item.chamado_id].push({ ...item, productId: item.product_id, unitPrice: item.unit_price, totalPrice: item.total_price });
+            return acc;
+        }, {} as { [key: number]: any[] });
+
+        const paymentsByChamadoId = (payments || []).reduce((acc, payment) => {
+            if (!acc[payment.chamado_id]) acc[payment.chamado_id] = [];
+            acc[payment.chamado_id].push(payment);
+            return acc;
+        }, {} as { [key: number]: any[] });
+
+        // Step 4: Attach items and payments to their respective chamados
+        const chamadosWithDetails = chamados.map(chamado => ({
+            ...chamado,
+            items: itemsByChamadoId[chamado.id] || [],
+            payments: paymentsByChamadoId[chamado.id] || []
+        }));
+
+        return chamadosWithDetails;
+    },
+    saveChamado: async (chamadoData) => {
+        // Step 1: Separate items from the main chamado data
+        const { items, ...mainChamadoData } = chamadoData;
+
+        // FIX: When editing, the `chamadoData` object contains enriched `client` object
+        // which is not a column in the `chamados` table. The Supabase client library throws
+        // an error when it finds properties that don't map to columns.
+        // We must remove it before the upsert operation to prevent the `[object Object]` error.
+        if ('client' in mainChamadoData) {
+            delete (mainChamadoData as any).client;
+        }
+        if ('payments' in mainChamadoData) {
+            delete (mainChamadoData as any).payments;
+        }
+
+        // FIX: The form sends `_list` arrays which are not in the DB schema.
+        // The `executeSave` function in the form modal correctly creates the string versions,
+        // but the original arrays are still present and must be removed to avoid the `[object Object]` error.
+        if ('problem_description_list' in mainChamadoData) {
+            delete (mainChamadoData as any).problem_description_list;
+        }
+        if ('solution_description_list' in mainChamadoData) {
+            delete (mainChamadoData as any).solution_description_list;
+        }
+
+        // Safeguard against schema drift
+        const dataToSave = { ...mainChamadoData };
+
+        // FIX: Explicitly ensure entity_id is null if it's a falsy value (e.g., '', 0).
+        // The database expects a valid bigint foreign key or NULL. An empty string from a form
+        // can cause a type mismatch error that results in a cryptic '[object Object]' message.
+        if (!dataToSave.entity_id) {
+            dataToSave.entity_id = null;
+        }
+
+        if (dataToSave.request_type !== 'Chamado de Serviço') {
+            delete dataToSave.equipment;
+            delete dataToSave.problem_description;
+            delete dataToSave.priority;
+        }
+        if (dataToSave.request_type !== 'Treinamento') {
+            delete dataToSave.training_description;
+            delete dataToSave.training_type;
+            delete dataToSave.other_training;
+            delete dataToSave.participants;
+        }
+        if (dataToSave.request_type !== 'Agendamento') {
+            delete dataToSave.scheduling_type;
+            delete dataToSave.estimated_duration;
+        }
+        if (dataToSave.request_type !== 'Treinamento' && dataToSave.request_type !== 'Agendamento') {
+             delete dataToSave.preferred_date;
+        }
+        if (dataToSave.preferred_date === '') {
+            dataToSave.preferred_date = null;
+        }
+        
+        // Step 2: Upsert the main chamado data and get the result
+        const { data: savedChamados, error } = await supabase
+            .from('chamados')
+            .upsert(dataToSave)
+            .select();
+            
+        if (error) handleSupabaseError(error, 'saveChamado (upsert)');
+        if (!savedChamados || savedChamados.length === 0) throw new Error("Falha ao salvar o chamado principal.");
+        
+        const chamadoId = savedChamados[0].id;
+
+        // Step 3: Delete existing items for this chamado
+        const { error: deleteError } = await supabase
+            .from('item')
+            .delete()
+            .eq('chamado_id', chamadoId);
+        if (deleteError) handleSupabaseError(deleteError, 'saveChamado (delete items)');
+
+        // Step 4: Insert new items if they exist
+        if (items && items.length > 0) {
+            const itemsToInsert = items.map((item: any) => ({
+                chamado_id: chamadoId,
+                product_id: item.productId, // Map to snake_case for DB
+                name: item.name,
+                quantity: item.quantity,
+                unit_price: item.unitPrice,
+                total_price: item.totalPrice,
+            }));
+
+            // Added for enhanced debugging
+            console.log('Tentativa de inserir itens no chamado:', JSON.stringify(itemsToInsert, null, 2));
+
+            const { error: insertError } = await supabase
+                .from('item')
+                .insert(itemsToInsert);
+            if (insertError) handleSupabaseError(insertError, 'saveChamado (insert items)');
+        }
+
+        // Step 5: Return the saved chamado with its items for consistency
+        const finalChamadoData = { ...savedChamados[0], items: items || [] };
+        return [finalChamadoData];
+    },
+    updateChamados: async (chamadoIds, updates) => {
+        const { data, error } = await supabase.from('chamados').update(updates).in('id', chamadoIds).select();
+        if (error) handleSupabaseError(error, 'updateChamados');
+        return data;
+    },
+    deleteChamado: async (id) => {
+        // Step 1: Delete associated items and payments first
+        const { error: deleteItemsError } = await supabase.from('item').delete().eq('chamado_id', id);
+        if (deleteItemsError) handleSupabaseError(deleteItemsError, 'deleteChamado (delete items)');
+        
+        const { error: deletePaymentsError } = await supabase.from('chamado_payments').delete().eq('chamado_id', id);
+        if (deletePaymentsError) handleSupabaseError(deletePaymentsError, 'deleteChamado (delete payments)');
+        
+        // Step 2: Delete the chamado itself
+        const { error } = await supabase.from('chamados').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteChamado (delete chamado)');
+    },
+    // --- ADIANTAMENTOS DE CHAMADO ---
+    addPaymentToChamado: async (paymentData) => {
+        const { data, error } = await supabase.from('chamado_payments').insert(paymentData).select();
+        if (error) handleSupabaseError(error, 'addPaymentToChamado');
+        return data;
+    },
+    deletePayment: async (paymentId) => {
+        const { error } = await supabase.from('chamado_payments').delete().eq('id', paymentId);
+        if (error) handleSupabaseError(error, 'deletePayment');
+    },
+
+
+    // --- TIPOS DE SOLICITAÇÃO ---
+    getRequestTypes: async () => {
+        const coreTypes = ['Chamado de Serviço', 'Treinamento', 'Agendamento'];
+        
+        let { data, error } = await supabase.from('request_types').select('name');
+        if (error) handleSupabaseError(error, 'getRequestTypes (fetch)');
+        
+        const existingTypes = data?.map(t => t.name) || [];
+        const missingTypes = coreTypes.filter(ct => !existingTypes.includes(ct));
+    
+        if (missingTypes.length > 0) {
+            const typesToInsert = missingTypes.map(name => ({ name }));
+            const { error: insertError } = await supabase.from('request_types').insert(typesToInsert);
+            if (insertError) handleSupabaseError(insertError, 'getRequestTypes (seed core types)');
+        }
+    
+        // Always return the full, fresh list
+        const { data: fullData, error: fullFetchError } = await supabase.from('request_types').select('*').order('name', { ascending: true });
+        if (fullFetchError) handleSupabaseError(fullFetchError, 'getRequestTypes (full fetch)');
+        return fullData || [];
+    },
+    saveRequestType: async (typeData) => {
+        const { data, error } = await supabase.from('request_types').upsert(typeData).select();
+        if (error) handleSupabaseError(error, 'saveRequestType');
+        return data;
+    },
+    deleteRequestType: async (id) => {
+        const { error } = await supabase.from('request_types').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteRequestType');
+    },
+
+    // --- SUGESTÕES ---
+    getSugestoes: async () => {
+        const { data, error } = await supabase.from('sugestoes').select('*').order('created_at', { ascending: false });
+        if (error) handleSupabaseError(error, 'getSugestoes');
+        return data || [];
+    },
+    saveSugestao: async (sugestaoData) => {
+        const { data, error } = await supabase.from('sugestoes').upsert(sugestaoData).select();
+        if (error) handleSupabaseError(error, 'saveSugestao');
+        return data;
+    },
+    deleteSugestao: async (id) => {
+        const { error } = await supabase.from('sugestoes').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteSugestao');
+    },
+
+    // --- EQUIPAMENTOS ---
+    getEquipamentos: async () => {
+        const { data, error } = await supabase.from('equipamentos').select('*').order('name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getEquipamentos');
+        return data || [];
+    },
+    saveEquipamento: async (equipamentoData) => {
+        const { data, error } = await supabase.from('equipamentos').upsert(equipamentoData).select();
+        if (error) handleSupabaseError(error, 'saveEquipamento');
+        return data;
+    },
+    deleteEquipamento: async (id) => {
+        const { error } = await supabase.from('equipamentos').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteEquipamento');
+    },
+    getTemporaryEquipamentos: async () => {
+        const { data, error } = await supabase.from('temporary_equipamentos').select('name');
+        if (error) handleSupabaseError(error, 'getTemporaryEquipamentos');
+        return (data || []).map(item => item.name);
+    },
+    addTemporaryEquipamento: async (name) => {
+        // Manual upsert to bypass potential 'onConflict' issues.
+        const { data, error: selectError } = await supabase
+            .from('temporary_equipamentos')
+            .select('id')
+            .eq('name', name)
+            .maybeSingle();
+
+        if (selectError) {
+            handleSupabaseError(selectError, 'addTemporaryEquipamento (select)');
+            return;
+        }
+
+        if (!data) {
+            // Only insert if it doesn't exist. There's nothing to update.
+            const { error: insertError } = await supabase
+                .from('temporary_equipamentos')
+                .insert({ name });
+            if (insertError) handleSupabaseError(insertError, 'addTemporaryEquipamento (insert)');
+        }
+    },
+    deleteTemporaryEquipamento: async (name) => {
+        const { error } = await supabase.from('temporary_equipamentos').delete().eq('name', name);
+        if (error) handleSupabaseError(error, 'deleteTemporaryEquipamento');
+    },
+
+    // --- REGIÕES ---
+    getRegioes: async () => {
+        const { data, error } = await supabase.from('regioes').select('*').order('name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getRegioes');
+        return data || [];
+    },
+    saveRegiao: async (regiaoData) => {
+        const { data, error } = await supabase.from('regioes').upsert(regiaoData).select();
+        if (error) handleSupabaseError(error, 'saveRegiao');
+        return data;
+    },
+    deleteRegiao: async (id) => {
+        const { error } = await supabase.from('regioes').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteRegiao');
+    },
+    syncFozRegions: async () => {
+        // Step 1: Sync main data (name, neighborhoods) robustly.
+        const { data: dbRegioes, error: fetchError } = await supabase.from('regioes').select('id, name, neighborhoods');
+        if (fetchError) {
+            handleSupabaseError(fetchError, 'syncFozRegions (fetch safe)');
+            return;
+        }
+
+        const staticRegionsMap = new Map(REGIOES_FOZ.map(r => [r.name, r]));
+        const dbRegioesMap = new Map((dbRegioes || []).map(r => [r.name, r]));
+        const regionsToDelete = (dbRegioes || []).filter(dbR => !staticRegionsMap.has(dbR.name)).map(r => r.id);
+        const regionsToUpsert: any[] = [];
+
+        for (const staticRegion of REGIOES_FOZ) {
+            // FIX: Cast dbRegion to 'any' to resolve properties 'neighborhoods' and 'id' not existing on type 'unknown'. This happens when TypeScript cannot infer the specific type of values stored in the Map.
+            const dbRegion: any = dbRegioesMap.get(staticRegion.name);
+            const staticNeighborhoods = [...staticRegion.neighborhoods].sort();
+            if (!dbRegion) {
+                regionsToUpsert.push({ name: staticRegion.name, neighborhoods: staticNeighborhoods });
+            } else {
+                const dbNeighborhoods = [...(dbRegion.neighborhoods || [])].sort();
+                if (JSON.stringify(staticNeighborhoods) !== JSON.stringify(dbNeighborhoods)) {
+                    regionsToUpsert.push({ id: dbRegion.id, name: staticRegion.name, neighborhoods: staticNeighborhoods });
+                }
+            }
+        }
+
+        if (regionsToDelete.length > 0) {
+            const { error: deleteError } = await supabase.from('regioes').delete().in('id', regionsToDelete);
+            if (deleteError) handleSupabaseError(deleteError, 'syncFozRegions (delete)');
+        }
+        if (regionsToUpsert.length > 0) {
+            const { error: upsertError } = await supabase.from('regioes').upsert(regionsToUpsert);
+            if (upsertError) handleSupabaseError(upsertError, 'syncFozRegions (upsert)');
+        }
+
+        // Step 2: Gracefully attempt to set initial coordinates for regions that don't have them.
+        try {
+            const { data: allCurrentRegioes, error: finalFetchError } = await supabase.from('regioes').select('id, name, center_coords');
+            if (finalFetchError) throw finalFetchError;
+
+            const updatesToPerform = [];
+            for (const dbRegion of allCurrentRegioes || []) {
+                if (!dbRegion.center_coords) { // Only update if null
+                    const staticRegion = staticRegionsMap.get(dbRegion.name);
+                    if (staticRegion && staticRegion.center) {
+                        updatesToPerform.push({ id: dbRegion.id, center_coords: staticRegion.center });
+                    }
+                }
+            }
+            if (updatesToPerform.length > 0) {
+                const { error: updateCoordsError } = await supabase.from('regioes').upsert(updatesToPerform);
+                if (updateCoordsError) handleSupabaseError(updateCoordsError, 'syncFozRegions (set initial coords)');
+            }
+        } catch (e) {
+            console.warn("Aviso: Não foi possível definir as coordenadas iniciais para as regiões. Isso pode ser devido à falta da coluna 'center_coords' ou a uma política de RLS restritiva. Execute a sincronização do esquema e verifique suas políticas de RLS.", e);
+        }
+    },
+    getPendingNeighborhoods: async () => {
+        const { data, error } = await supabase.from('pending_neighborhoods').select('*').order('name', { ascending: true });
+        if (error) handleSupabaseError(error, 'getPendingNeighborhoods');
+        return data || [];
+    },
+    deletePendingNeighborhood: async (name) => {
+        const { error } = await supabase.from('pending_neighborhoods').delete().eq('name', name);
+        if (error) handleSupabaseError(error, 'deletePendingNeighborhood');
+    },
+    updateEntitiesRegion: async (neighborhood, regionName) => {
+        const { data: entitiesToUpdate, error: fetchError } = await supabase
+            .from('entities')
+            .select('id, address')
+            .filter('address->>neighborhood', 'eq', neighborhood);
+        if (fetchError) handleSupabaseError(fetchError, 'updateEntitiesRegion (fetch)');
+        if (!entitiesToUpdate || entitiesToUpdate.length === 0) return;
+
+        const updates = entitiesToUpdate.map(entity => ({
+            id: entity.id, // Must include primary key for upsert
+            address: { ...entity.address, region: regionName }
+        }));
+        
+        const { error: updateError } = await supabase.from('entities').upsert(updates);
+        if (updateError) handleSupabaseError(updateError, 'updateEntitiesRegion (update)');
+    },
+
+    // --- MARKET POINTS ---
+    getMarketPoints: async () => {
+        const { data, error } = await supabase.from('market_points').select('*');
+        if (error) handleSupabaseError(error, 'getMarketPoints');
+        return data || [];
+    },
+    saveMarketPoint: async (pointData) => {
+        const { data, error } = await supabase.from('market_points').upsert(pointData).select();
+        if (error) handleSupabaseError(error, 'saveMarketPoint');
+        return data;
+    },
+    deleteMarketPoint: async (id) => {
+        const { error } = await supabase.from('market_points').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteMarketPoint');
+    },
+    
+    // --- ROTAS ---
+    getRotas: async () => {
+        const { data, error } = await supabase.from('rotas').select('*');
+        if (error) handleSupabaseError(error, 'getRotas');
+        return data || [];
+    },
+    saveRotas: async (rotas) => {
+        const { data, error } = await supabase.from('rotas').upsert(rotas).select();
+        if (error) handleSupabaseError(error, 'saveRotas');
+        return data;
+    },
+    deleteRota: async (id) => {
+        const { error } = await supabase.from('rotas').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteRota');
+    },
+
+    // --- FINANCEIRO ---
+    getFinanceiroEntries: async () => {
+        // Manual join to avoid relationship errors
+        const { data: entries, error: entriesError } = await supabase.from('financeiro').select('*').order('due_date', { ascending: true });
+        if (entriesError) handleSupabaseError(entriesError, 'getFinanceiroEntries');
+        if (!entries || entries.length === 0) return [];
+        
+        const { data: entities, error: entitiesError } = await supabase.from('entities').select('id, trade_name, legal_name');
+        if (entitiesError) handleSupabaseError(entitiesError, 'getFinanceiroEntries (entities)');
+
+        const entityMap = new Map((entities || []).map(e => [e.id, e.trade_name || e.legal_name]));
+
+        return entries.map(entry => ({
+            ...entry,
+            entity_name: entityMap.get(entry.entity_id) || 'Entidade não encontrada'
+        }));
+    },
+    saveFinanceiroEntry: async (entryData) => {
+        const { installments, ...baseEntry } = entryData;
+
+        // Se for uma atualização, apenas faz o upsert
+        if (baseEntry.id) {
+            const { data, error } = await supabase.from('financeiro').upsert(baseEntry).select();
+            if (error) handleSupabaseError(error, 'saveFinanceiroEntry (update)');
+            return data;
+        }
+
+        // Se for uma nova entrada com parcelas
+        if (installments && installments > 1) {
+            const entriesToInsert = [];
+            const originalDueDate = new Date(baseEntry.due_date + 'T12:00:00Z');
+
+            for (let i = 0; i < installments; i++) {
+                const newDueDate = new Date(originalDueDate);
+                newDueDate.setUTCMonth(originalDueDate.getUTCMonth() + i);
+                
+                // Remove o ID para que o BD gere um novo para cada parcela
+                const { id, ...installmentEntry } = baseEntry;
+
+                entriesToInsert.push({
+                    ...installmentEntry,
+                    description: `${baseEntry.description || 'Lançamento'} ${i + 1}/${installments}`,
+                    due_date: newDueDate.toISOString(),
+                });
+            }
+            
+            const { data, error } = await supabase.from('financeiro').insert(entriesToInsert).select();
+            if (error) handleSupabaseError(error, 'saveFinanceiroEntry (recurring)');
+            return data;
+        }
+
+        // Se for uma nova entrada única
+        const { data, error } = await supabase.from('financeiro').insert(baseEntry).select();
+        if (error) handleSupabaseError(error, 'saveFinanceiroEntry (single new)');
+        return data;
+    },
+    saveMultipleFinanceiroEntries: async (entries) => {
+        if (!entries || entries.length === 0) return [];
+        const { data, error } = await supabase.from('financeiro').insert(entries).select();
+        if (error) handleSupabaseError(error, 'saveMultipleFinanceiroEntries');
+        return data;
+    },
+    deleteFinanceiroEntry: async (id) => {
+        const { error } = await supabase.from('financeiro').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteFinanceiroEntry');
+    },
+    getPaymentHistoryForEntry: async (financeiroId) => {
+        const { data, error } = await supabase
+            .from('payment_history')
+            .select('*')
+            .eq('financeiro_id', financeiroId)
+            .order('payment_date', { ascending: false });
+        if (error) handleSupabaseError(error, 'getPaymentHistoryForEntry');
+        return data || [];
+    },
+    makePayment: async ({ financeiroId, amountPaid, paymentDate }) => {
+        // Step 1: Record the payment in the history
+        const { error: historyError } = await supabase
+            .from('payment_history')
+            .insert({ financeiro_id: financeiroId, amount_paid: amountPaid, payment_date: paymentDate });
+        if (historyError) handleSupabaseError(historyError, 'makePayment (history insert)');
+        
+        // Step 2: Get the current financial entry
+        const { data: entryData, error: fetchError } = await supabase
+            .from('financeiro')
+            .select('amount, paid_amount')
+            .eq('id', financeiroId)
+            .single();
+        if (fetchError) handleSupabaseError(fetchError, 'makePayment (fetch entry)');
+        if (!entryData) throw new Error('Lançamento financeiro não encontrado.');
+
+        // Step 3: Calculate new total paid and determine new status
+        const currentPaid = entryData.paid_amount || 0;
+        const newPaidAmount = currentPaid + amountPaid;
+        const totalAmount = entryData.amount;
+        const newStatus = newPaidAmount >= totalAmount ? 'Pago' : 'Pendente';
+
+        // Step 4: Update the financial entry
+        const { error: updateError } = await supabase
+            .from('financeiro')
+            .update({
+                paid_amount: newPaidAmount,
+                status: newStatus,
+                payment_date: paymentDate // Update the latest payment date, even if partial
+            })
+            .eq('id', financeiroId);
+        if (updateError) handleSupabaseError(updateError, 'makePayment (update entry)');
+    },
+    reversePayment: async ({ paymentHistoryId, financeiroId, amountToReverse }) => {
+        // Step 1: Delete the payment from history
+        const { error: deleteError } = await supabase
+            .from('payment_history')
+            .delete()
+            .eq('id', paymentHistoryId);
+        if (deleteError) handleSupabaseError(deleteError, 'reversePayment (delete history)');
+
+        // Step 2: Get the current financial entry
+        const { data: entryData, error: fetchError } = await supabase
+            .from('financeiro')
+            .select('amount, paid_amount')
+            .eq('id', financeiroId)
+            .single();
+        if (fetchError) handleSupabaseError(fetchError, 'reversePayment (fetch entry)');
+        if (!entryData) throw new Error('Lançamento financeiro não encontrado para estorno.');
+
+        // Step 3: Calculate new total paid and determine new status
+        const currentPaid = entryData.paid_amount || 0;
+        const newPaidAmount = Math.max(0, currentPaid - amountToReverse);
+        const newStatus = newPaidAmount < entryData.amount ? 'Pendente' : 'Pago';
+        
+        // Step 4: Update the financial entry
+        const { error: updateError } = await supabase
+            .from('financeiro')
+            .update({
+                paid_amount: newPaidAmount,
+                status: newStatus,
+            })
+            .eq('id', financeiroId);
+        if (updateError) handleSupabaseError(updateError, 'reversePayment (update entry)');
+    },
+    
+    // --- LANÇAMENTOS RECORRENTES ---
+    getRecurringEntries: async () => {
+        const { data: entries, error } = await supabase.from('recurring_entries').select('*').order('created_at', { ascending: false });
+        if (error) handleSupabaseError(error, 'getRecurringEntries');
+        if (!entries || entries.length === 0) return [];
+        
+        const { data: entities, error: entitiesError } = await supabase.from('entities').select('id, trade_name, legal_name');
+        if (entitiesError) handleSupabaseError(entitiesError, 'getRecurringEntries (entities)');
+
+        const entityMap = new Map((entities || []).map(e => [e.id, e.trade_name || e.legal_name]));
+
+        return entries.map(entry => ({
+            ...entry,
+            entity_name: entityMap.get(entry.entity_id) || 'Entidade não encontrada'
+        }));
+    },
+    saveRecurringEntry: async (entryData) => {
+        const { data, error } = await supabase.from('recurring_entries').upsert(entryData).select();
+        if (error) handleSupabaseError(error, 'saveRecurringEntry');
+        return data;
+    },
+    deleteRecurringEntry: async (id) => {
+        const { error } = await supabase.from('recurring_entries').delete().eq('id', id);
+        if (error) handleSupabaseError(error, 'deleteRecurringEntry');
+    },
+
+    // --- FATURAMENTO ---
+    invoiceChamado: async (chamado, paymentMethod) => {
+        const totalValue = chamado.items?.reduce((acc, item) => acc + item.totalPrice, 0) || 0;
+        
+        // Update chamado status regardless of value
+        const { error: chamadoError } = await supabase.from('chamados').update({ status: 'Concluído', invoiced: true }).eq('id', chamado.id);
+        if (chamadoError) handleSupabaseError(chamadoError, 'invoiceChamado (chamado)');
+        
+        // Only create financial entry if there's a value
+        if (totalValue > 0) {
+            const financeiroEntry = {
+                description: `Faturamento Chamado #${chamado.id} - ${chamado.client_name}`,
+                amount: totalValue,
+                due_date: new Date().toISOString(),
+                type: 'R', // A Receber
+                status: paymentMethod === 'À Vista' ? 'Pago' : 'Pendente',
+                paid_amount: paymentMethod === 'À Vista' ? totalValue : 0,
+                payment_date: paymentMethod === 'À Vista' ? new Date().toISOString() : null,
+                entity_id: chamado.entity_id,
+                chamado_id: chamado.id,
+            };
+            const { error: finError } = await supabase.from('financeiro').insert(financeiroEntry);
+            if (finError) handleSupabaseError(finError, 'invoiceChamado (financeiro)');
+        }
+        
+        // Check if this was the last chamado on an open route
+        const { data: rotas, error: rotasError } = await supabase.from('rotas').select('*').eq('status', 'Aberta');
+        if (rotasError) handleSupabaseError(rotasError, 'invoiceChamado (check rotas)');
+        
+        if (rotas && rotas.length > 0) {
+            for (const rota of rotas) {
+                if (rota.chamado_ids?.includes(chamado.id)) {
+                    const { data: chamadosOnRoute, error: chamadosRouteError } = await supabase
+                        .from('chamados')
+                        .select('id, status')
+                        .in('id', rota.chamado_ids);
+                    if (chamadosRouteError) handleSupabaseError(chamadosRouteError, 'invoiceChamado (check chamados on rota)');
+
+                    const allFinished = chamadosOnRoute?.every(c => c.status === 'Concluído' || c.status === 'Cancelado');
+                    if (allFinished) {
+                        const { error: rotaUpdateError } = await supabase.from('rotas').update({ status: 'Finalizada' }).eq('id', rota.id);
+                        if (rotaUpdateError) handleSupabaseError(rotaUpdateError, 'invoiceChamado (update rota status)');
+                    }
+                    break; 
+                }
+            }
+        }
+    },
+    bulkInvoiceChamados: async (chamados, paymentMethod) => {
+        if (!chamados || chamados.length === 0) return;
+
+        const clientId = chamados[0].entity_id;
+        const clientName = chamados[0].client_name;
+        const totalValue = chamados.reduce((acc, chamado) => {
+            const chamadoTotal = chamado.items?.reduce((itemAcc, item) => itemAcc + item.totalPrice, 0) || 0;
+            return acc + chamadoTotal;
+        }, 0);
+
+        const chamadosIds = chamados.map(c => c.id);
+        const { error: chamadoError } = await supabase.from('chamados').update({ status: 'Concluído', invoiced: true }).in('id', chamadosIds);
+        if (chamadoError) handleSupabaseError(chamadoError, 'bulkInvoiceChamados (chamados)');
+
+        if (totalValue > 0) {
+            const financeiroEntry = {
+                description: `Faturamento de ${chamados.length} chamados - ${clientName}`,
+                amount: totalValue,
+                due_date: new Date().toISOString(),
+                type: 'R', // A Receber
+                status: paymentMethod === 'À Vista' ? 'Pago' : 'Pendente',
+                paid_amount: paymentMethod === 'À Vista' ? totalValue : 0,
+                payment_date: paymentMethod === 'À Vista' ? new Date().toISOString() : null,
+                entity_id: clientId,
+            };
+
+            const { error: finError } = await supabase.from('financeiro').insert(financeiroEntry);
+            if (finError) handleSupabaseError(finError, 'bulkInvoiceChamados (financeiro)');
+        }
+    },
+    
+    // --- DADOS DA EMPRESA ---
+    getCompanyProfile: async () => {
+        const { data, error } = await supabase.from('company_profiles').select('*').eq('id', 1).single();
+        if (error && error.code !== 'PGRST116') { // PGRST116 is "exact one row not found"
+             handleSupabaseError(error, 'getCompanyProfile');
+        }
+        return data;
+    },
+    saveCompanyProfile: async (profileData) => {
+        const dataToSave = { id: 1, ...profileData };
+        const { data, error } = await supabase.from('company_profiles').upsert(dataToSave).select();
+        if (error) handleSupabaseError(error, 'saveCompanyProfile');
+        return data;
+    },
+
+    // --- DATABASE SCHEMA ---
+    verifyAndSyncSchema: async (sync = false) => {
+        const statusMessages: { text: string; status: 'ok' | 'missing' | 'error' }[] = [];
+        const actionsTaken: string[] = [];
+        const missingTables: string[] = [];
+        const missingColumns: { [tableName: string]: { name: string; type: string }[] } = {};
+
+        // Step 1: Get the current schema from the database using the RPC
+        const { data: currentSchema, error: rpcError } = await supabase.rpc('get_public_schema_info');
+
+        if (rpcError) {
+            console.error('RPC Error fetching schema:', rpcError);
+            if (rpcError.message.includes("function get_public_schema_info() does not exist")) {
+                 throw new Error(`SCHEMA_INTROSPECTION_ERROR: A função 'get_public_schema_info' não existe no seu banco de dados. Por favor, siga as instruções na página para criá-la.`);
+            }
+            throw new Error(`Erro ao buscar o esquema do banco: ${rpcError.message}`);
+        }
+
+        const expectedSchema = DATABASE_SCHEMA;
+
+        // Step 2: Compare with the expected schema (DATABASE_SCHEMA)
+        const expectedTables = Object.keys(expectedSchema);
+        const actualTables = [...new Set((currentSchema || []).map(col => col.table_name))];
+
+        for (const tableName of expectedTables) {
+            if (!actualTables.includes(tableName)) {
+                statusMessages.push({ text: `Tabela '${tableName}' está faltando`, status: 'missing' });
+                missingTables.push(tableName);
+            } else {
+                statusMessages.push({ text: `Tabela '${tableName}' encontrada`, status: 'ok' });
+                const expectedColumnsMap = expectedSchema[tableName].columns;
+                const actualColumns = (currentSchema || []).filter(col => col.table_name === tableName).map(col => col.column_name);
+                
+                for (const [columnName, columnDef] of Object.entries(expectedColumnsMap)) {
+                    if (!actualColumns.includes(columnName)) {
+                        const columnType = (columnDef as { dataType: string }).dataType;
+                        statusMessages.push({ text: `  Coluna '${columnName}' está faltando`, status: 'missing' });
+                        if (!missingColumns[tableName]) missingColumns[tableName] = [];
+                        missingColumns[tableName].push({ name: columnName, type: columnType });
+                    }
+                }
+            }
+        }
+        
+        // Step 3: If sync is enabled, perform the necessary actions
+        if (sync) {
+            // Create missing tables
+            for (const tableName of missingTables) {
+                const columns = Object.entries(expectedSchema[tableName].columns).map(([name, columnDef]) => `${name} ${(columnDef as { dataType: string }).dataType}`);
+                const { error } = await supabase.rpc('create_table_from_schema', { p_table_name: tableName, p_columns: columns });
+                if (error) {
+                    statusMessages.push({ text: `Erro ao criar tabela '${tableName}': ${error.message}`, status: 'error' });
+                } else {
+                    actionsTaken.push(`Tabela '${tableName}' criada com sucesso.`);
+                }
+            }
+            // Add missing columns
+            for (const tableName in missingColumns) {
+                for (const column of missingColumns[tableName]) {
+                    const { error } = await supabase.rpc('add_column_from_schema', { p_table_name: tableName, p_column_name: column.name, p_column_type: column.type });
+                    if (error) {
+                         statusMessages.push({ text: `Erro ao adicionar coluna '${column.name}' a '${tableName}': ${error.message}`, status: 'error' });
+                    } else {
+                        actionsTaken.push(`Coluna '${column.name}' adicionada a '${tableName}'.`);
+                    }
+                }
+            }
+        }
+        
+        return { statusMessages, actionsTaken, missingTables, missingColumns };
+    },
+
+    // --- DATA MIGRATION ---
+    checkForMigrations: async () => {
+        try {
+            // This is a "canary" query. We try to select a column that only exists in the old schema.
+            const { error } = await supabase.from('entities').select('is_recurring').limit(1);
+    
+            if (!error) {
+                // The query succeeded, meaning the 'is_recurring' column exists.
+                // Now we check if there's actually data to migrate.
+                const { count: dataCount, error: dataError } = await supabase
+                    .from('entities')
+                    .select('id', { count: 'exact', head: true })
+                    .or('entity_type.is.not.null,is_recurring.eq.true');
+    
+                if (dataError) {
+                    // This could be a complex RLS issue. Log it but assume migration is needed since the columns are there.
+                    console.warn("Migration check warning: Could not count legacy data, but columns exist.", dataError);
+                    return true; // Show the button just in case.
+                }
+                return (dataCount || 0) > 0;
+            }
+    
+            // An error occurred. '42703' is "undefined_column". This is the expected case for a new schema.
+            if (error.code === '42703') {
+                return false; // Column doesn't exist, no migration needed.
+            }
+    
+            // Any other error (e.g., permission denied from RLS) is ambiguous.
+            // It's safer to show the button if we get an unexpected error, rather than hide it.
+            console.warn("Ambiguous error during migration check. Assuming migration might be needed.", error);
+            return true;
+    
+        } catch (e) {
+            console.error('A non-standard error occurred in checkForMigrations:', e);
+            return false; // Fail safe on catastrophic errors
+        }
+    },
+
+    runDataMigration: async () => {
+        // Step 1: Fetch ALL entities first to avoid errors on schemas missing legacy columns.
+        const { data: allEntities, error: fetchError } = await supabase
+            .from('entities')
+            .select('*');
+
+        if (fetchError) handleSupabaseError(fetchError, 'runDataMigration (fetch)');
+        if (!allEntities || allEntities.length === 0) return 'Nenhuma entidade encontrada para verificar.';
+
+        // Step 2: Filter on the client-side to find entities that need migration.
+        const entitiesToMigrate = allEntities.filter(entity => 
+            entity.entity_type != null || entity.is_recurring === true
+        );
+        
+        if (entitiesToMigrate.length === 0) return 'Nenhuma migração necessária.';
+
+        const entityUpdates: any[] = [];
+        const recurringEntriesToCreate: any[] = [];
+
+        // Step 3: Process each entity
+        for (const entity of entitiesToMigrate) {
+            const update: { [key: string]: any } = { id: entity.id };
+            let needsUpdate = false;
+
+            // Migrate entity_type to is_client/is_supplier flags
+            if (entity.entity_type) {
+                if (entity.entity_type === 'Cliente') update.is_client = true;
+                if (entity.entity_type === 'Fornecedor') update.is_supplier = true;
+                update.entity_type = null;
+                needsUpdate = true;
+            }
+
+            // Migrate old recurring fields to new recurring_entries table
+            if (entity.is_recurring && entity.recurring_amount && entity.recurring_due_day) {
+                const type = entity.is_client || entity.entity_type === 'Cliente' ? 'R' : 'P';
+                recurringEntriesToCreate.push({
+                    type: type,
+                    entity_id: entity.id,
+                    description: `Faturamento Recorrente - ${entity.trade_name || entity.legal_name}`,
+                    amount: entity.recurring_amount,
+                    frequency: 'Mensal',
+                    due_day: entity.recurring_due_day,
+                    start_date: new Date().toISOString(),
+                    status: 'Ativo',
+                    account_plan: type === 'R' ? 'Receita de Vendas' : 'Despesa Administrativa',
+                    payment_method: 'Boleto',
+                });
+
+                update.is_recurring = null;
+                update.recurring_amount = null;
+                update.recurring_due_day = null;
+                needsUpdate = true;
+            }
+
+            if (needsUpdate) {
+                entityUpdates.push(update);
+            }
+        }
+
+        // Step 4: Execute database operations
+        if (recurringEntriesToCreate.length > 0) {
+            const { error: insertError } = await supabase.from('recurring_entries').insert(recurringEntriesToCreate);
+            if (insertError) handleSupabaseError(insertError, 'runDataMigration (insert recurring)');
+        }
+
+        if (entityUpdates.length > 0) {
+            const { error: updateError } = await supabase.from('entities').upsert(entityUpdates);
+            if (updateError) handleSupabaseError(updateError, 'runDataMigration (update entities)');
+        }
+
+        return `Migração concluída: ${entityUpdates.length} entidades atualizadas e ${recurringEntriesToCreate.length} recorrências criadas.`;
+    },
 };

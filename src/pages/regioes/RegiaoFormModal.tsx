@@ -2,8 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { Modal } from '../../components/Modal';
 import { InputField } from '../../components/Generic';
 import { capitalizeWords } from '../../utils/helpers';
+import { SpinnerIcon } from '../../components/Icons';
 
-export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao }) => {
+export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao, isSaving }) => {
     const initialFormState = { name: '', neighborhoods: '' };
     const [formData, setFormData] = useState(initialFormState);
 
@@ -12,7 +13,7 @@ export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao }) => {
             if (regiao) {
                 setFormData({
                     name: regiao.name,
-                    neighborhoods: regiao.neighborhoods.join(', ')
+                    neighborhoods: (regiao.neighborhoods || []).join(', ')
                 });
             } else {
                 setFormData(initialFormState);
@@ -28,7 +29,8 @@ export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao }) => {
 
     const handleSubmit = (e) => {
         e.preventDefault();
-        const neighborhoodsArray = formData.neighborhoods
+        if (isSaving) return;
+        const neighborhoodsArray = (formData.neighborhoods || '')
             .split(',')
             .map(b => capitalizeWords(b.trim()))
             .filter(b => b); // Remove empty strings
@@ -41,9 +43,15 @@ export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao }) => {
         onSave(dataToSave);
     };
 
+    const preventSubmitOnEnter = (e: React.KeyboardEvent<HTMLFormElement>) => {
+        if (e.key === 'Enter' && (e.target as HTMLElement).tagName.toLowerCase() === 'input') {
+            e.preventDefault();
+        }
+    };
+
     return (
-        <Modal isOpen={isOpen} onClose={onClose} title={regiao ? 'Editar Região' : 'Adicionar Região'} maxWidth="max-w-xl">
-            <form onSubmit={handleSubmit} className="space-y-6">
+        <Modal isOpen={isOpen} onClose={onClose} title={regiao ? 'Editar Região' : 'Adicionar Região'} maxWidth="max-w-xl" closeOnBackdropClick={false} closeOnEscape={false} showCloseButton={false}>
+            <form onSubmit={handleSubmit} onKeyDown={preventSubmitOnEnter} className="space-y-6">
                 <InputField
                     label="Nome da Região"
                     id="name"
@@ -71,8 +79,10 @@ export const RegiaoFormModal = ({ isOpen, onClose, onSave, regiao }) => {
                     <p className="text-xs text-gray-400 mt-1">Separe os nomes dos bairros por vírgula.</p>
                 </div>
                 <div className="flex justify-end space-x-3 pt-6 border-t border-gray-700">
-                    <button type="button" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
-                    <button type="submit" className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors">Salvar</button>
+                    <button type="button" name="formCancel" onClick={onClose} className="px-5 py-2 text-sm font-semibold text-gray-300 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors">Cancelar</button>
+                    <button type="submit" name="formSave" disabled={isSaving} className="px-5 py-2 text-sm font-semibold text-white bg-blue-600 rounded-lg hover:bg-blue-500 transition-colors flex items-center justify-center w-24 disabled:bg-blue-800 disabled:cursor-not-allowed">
+                        {isSaving ? <SpinnerIcon className="w-5 h-5" /> : 'Salvar'}
+                    </button>
                 </div>
             </form>
         </Modal>
